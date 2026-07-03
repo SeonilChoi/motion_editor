@@ -1,0 +1,12 @@
+.next/
+node_modules/
+out/
+dist/
+*.log
+.env*
+
+# nested standalone clone (github.com/SeonilChoi/motion_editor) — tracked separately
+motion_editor/
+
+# TypeScript incremental build info
+*.tsbuildinfo
