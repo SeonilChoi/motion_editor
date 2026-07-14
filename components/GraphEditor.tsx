@@ -200,7 +200,9 @@ type NodeValueDragState = {
 type NodeFrameDragState = {
   axisIndex: number;
   startClientX: number;
+  startClientY: number;
   framesPerPixel: number;
+  valuePerPixel: number;
   baseValues: MotionValue[];
   origins: Array<{ frame: number; value: number }>;
   moved: boolean;
@@ -333,6 +335,9 @@ const DEFAULT_SPLINE_TENSION = 0;
 const MAX_TIMELINE_FRAME = 100000;
 const MOTION_FRAME_INTERVAL_SECONDS = 0.01;
 const DEGREE_MATCH_TOLERANCE = 0.1;
+// 플롯 SVG 세로 매핑: 값 범위가 y% 92(하단)~8(상단), 총 84%를 차지한다 (기존 92/84 수식과 동일한 기하).
+const PLOT_VALUE_SPAN_PERCENT = 84;
+const NODE_DRAG_DEAD_ZONE_PX = 3;
 
 const isMotionNumber = (value: MotionValue | undefined): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -2825,7 +2830,8 @@ export function GraphEditor() {
     return () => window.removeEventListener("keydown", handleNudgeKeyDown);
   }, []);
 
-  // 키 수평 드래그: 다중 선택은 값 고정·시간만 함께 이동 (상대 간격 유지).
+  // 키 2D 드래그 (Maya Move Tool 파리티): 시간+값 동시 이동, Shift = 지배축 잠금,
+  // 다중 선택은 모든 키가 같은 오프셋으로 이동해 상대 간격을 유지한다.
   const handleKeyNodePointerDown = (event: PointerEvent<HTMLButtonElement>, node: SelectedNode) => {
     if (event.button !== 0) return;
     if (kKeyRef.current) return;
@@ -2847,7 +2853,7 @@ export function GraphEditor() {
 
     if (origins.length === 0) return;
 
-    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
 
     const baseValues = [...selectedAxisRecord.values];
     origins.forEach(({ frame }) => {
@@ -2857,46 +2863,68 @@ export function GraphEditor() {
     nodeFrameDragRef.current = {
       axisIndex: selectedAxisRecord.index,
       startClientX: event.clientX,
+      startClientY: event.clientY,
       framesPerPixel: visibleFrameSpan / rect.width,
+      valuePerPixel:
+        (Math.max(yRange.max - yRange.min, 0.0001) * 100) / (PLOT_VALUE_SPAN_PERCENT * rect.height),
       baseValues,
       origins,
       moved: false,
     };
-  };
 
-  const handleKeyNodePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    const drag = nodeFrameDragRef.current;
-    if (!drag) return;
+    // 드래그로 키의 프레임이 바뀌면 해당 키 버튼이 리마운트되어 pointer capture가 끊긴다.
+    // 드래그 수명을 DOM 노드와 분리하기 위해 window 리스너로 추적한다.
+    const handleWindowPointerMove = (moveEvent: globalThis.PointerEvent) => {
+      const drag = nodeFrameDragRef.current;
+      if (!drag || moveEvent.pointerId !== event.pointerId) return;
 
-    const deltaFrames = Math.round((event.clientX - drag.startClientX) * drag.framesPerPixel);
-    if (deltaFrames === 0) return;
+      const deltaX = moveEvent.clientX - drag.startClientX;
+      const deltaY = moveEvent.clientY - drag.startClientY;
 
-    if (!drag.moved) {
-      pushUndoSnapshot();
-      drag.moved = true;
-    }
+      // 데드존: 클릭 수준의 미세 이동은 드래그로 취급하지 않는다 (클릭 선택·유령 undo 방지).
+      if (!drag.moved && Math.abs(deltaX) < NODE_DRAG_DEAD_ZONE_PX && Math.abs(deltaY) < NODE_DRAG_DEAD_ZONE_PX) return;
 
-    const moves = drag.origins.map(({ frame, value }) => ({
-      toFrame: clamp(frame + deltaFrames, 0, MAX_TIMELINE_FRAME),
-      value,
-    }));
+      const axisLock = moveEvent.shiftKey ? (Math.abs(deltaX) >= Math.abs(deltaY) ? "time" : "value") : null;
+      const deltaFrames = axisLock === "value" ? 0 : Math.round(deltaX * drag.framesPerPixel);
+      const deltaValue = axisLock === "time" ? 0 : -deltaY * drag.valuePerPixel;
 
-    applyNodeFrameMove(drag.axisIndex, drag.baseValues, moves);
+      if (!drag.moved) {
+        pushUndoSnapshot();
+        drag.moved = true;
+      }
 
-    const nextSelected = moves.map((move) => ({ axisIndex: drag.axisIndex, frame: move.toFrame }));
-    setSelectedNodes(nextSelected);
-    setSelectedNode(nextSelected[0] ?? null);
-    setCurrentFrame(nextSelected[0]?.frame ?? currentFrame);
-  };
+      const moves = drag.origins.map(({ frame, value }) => ({
+        toFrame: clamp(frame + deltaFrames, 0, MAX_TIMELINE_FRAME),
+        value: value + deltaValue,
+      }));
 
-  const handleKeyNodePointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
-    const drag = nodeFrameDragRef.current;
-    nodeFrameDragRef.current = null;
-    justDraggedNodeFrameRef.current = drag?.moved ?? false;
+      applyNodeFrameMove(drag.axisIndex, drag.baseValues, moves);
 
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
+      const nextSelected = moves.map((move) => ({ axisIndex: drag.axisIndex, frame: move.toFrame }));
+      setSelectedNodes(nextSelected);
+      setSelectedNode(nextSelected[0] ?? null);
+      if (nextSelected[0]) {
+        setCurrentFrame(nextSelected[0].frame);
+      }
+      if (moves.length === 1) {
+        setNodeDegreeInput(formatStatNumber(moves[0].value));
+      }
+    };
+
+    const handleWindowPointerEnd = (endEvent: globalThis.PointerEvent) => {
+      if (endEvent.pointerId !== event.pointerId) return;
+
+      const drag = nodeFrameDragRef.current;
+      nodeFrameDragRef.current = null;
+      justDraggedNodeFrameRef.current = drag?.moved ?? false;
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerEnd);
+      window.removeEventListener("pointercancel", handleWindowPointerEnd);
+    };
+
+    window.addEventListener("pointermove", handleWindowPointerMove);
+    window.addEventListener("pointerup", handleWindowPointerEnd);
+    window.addEventListener("pointercancel", handleWindowPointerEnd);
   };
 
   const shiftSelectedNodeToLeft = () => {
@@ -4695,9 +4723,6 @@ export function GraphEditor() {
                             syncNodeDegreeInput(selectedAxisRecord?.values[node.frame]);
                           }}
                           onPointerDown={(event) => handleKeyNodePointerDown(event, node)}
-                          onPointerMove={handleKeyNodePointerMove}
-                          onPointerUp={handleKeyNodePointerEnd}
-                          onPointerCancel={handleKeyNodePointerEnd}
                         />
                       </Fragment>
                     );
