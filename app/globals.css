@@ -813,6 +813,60 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
+.regionScaleBox {
+  background: rgba(98, 214, 255, 0.05);
+  border: 1px dashed rgba(98, 214, 255, 0.65);
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.regionScaleHandle {
+  appearance: none;
+  background: rgba(98, 214, 255, 0.28);
+  border: 1px solid rgba(98, 214, 255, 0.9);
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+}
+
+.regionScaleHandle:hover,
+.regionScaleHandle:active {
+  background: rgba(98, 214, 255, 0.6);
+}
+
+.regionScaleHandle.left {
+  bottom: 0;
+  cursor: ew-resize;
+  left: -4px;
+  top: 0;
+  width: 7px;
+}
+
+.regionScaleHandle.right {
+  bottom: 0;
+  cursor: ew-resize;
+  right: -4px;
+  top: 0;
+  width: 7px;
+}
+
+.regionScaleHandle.top {
+  cursor: ns-resize;
+  height: 7px;
+  left: 0;
+  right: 0;
+  top: -4px;
+}
+
+.regionScaleHandle.bottom {
+  bottom: -4px;
+  cursor: ns-resize;
+  height: 7px;
+  left: 0;
+  right: 0;
+}
+
 .generatedKeyHandleDot {
   appearance: none;
   background: #3a3a3a;

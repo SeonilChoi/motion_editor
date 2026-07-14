@@ -208,6 +208,24 @@ type NodeFrameDragState = {
   moved: boolean;
 };
 
+type RegionScaleEdge = "left" | "right" | "top" | "bottom";
+
+type RegionScaleDragState = {
+  axisIndex: number;
+  edge: RegionScaleEdge;
+  startClientX: number;
+  startClientY: number;
+  framesPerPixel: number;
+  valuePerPixel: number;
+  baseValues: MotionValue[];
+  origins: Array<{ frame: number; value: number }>;
+  minFrame: number;
+  maxFrame: number;
+  minValue: number;
+  maxValue: number;
+  moved: boolean;
+};
+
 type GenerationMenuState = {
   x: number;
   y: number;
@@ -1571,6 +1589,7 @@ export function GraphEditor() {
   const boxSelectRef = useRef<BoxSelectState | null>(null);
   const nodeValueDragRef = useRef<NodeValueDragState | null>(null);
   const nodeFrameDragRef = useRef<NodeFrameDragState | null>(null);
+  const regionScaleDragRef = useRef<RegionScaleDragState | null>(null);
   const justDraggedNodeFrameRef = useRef(false);
   const generatedHandleDragRef = useRef<GeneratedHandleDragState | null>(null);
   const generatedSegmentIdRef = useRef(0);
@@ -1783,6 +1802,42 @@ export function GraphEditor() {
     () => generatedSegments.find((segment) => generatedSegmentKey(segment) === selectedGeneratedSegmentKey) ?? null,
     [generatedSegments, selectedGeneratedSegmentKey],
   );
+  // Maya Region(Scale Keys) 도구: 2개 이상 키 선택 시 스케일 박스의 데이터 좌표 경계.
+  const regionScaleBounds = useMemo(() => {
+    if (!selectedAxisRecord || selectedGeneratedSegment) return null;
+
+    const nodes = selectedNodes.filter((node) => node.axisIndex === selectedAxisRecord.index);
+    if (nodes.length < 2) return null;
+
+    let minFrame = Infinity;
+    let maxFrame = -Infinity;
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+
+    nodes.forEach((node) => {
+      const value = selectedAxisRecord.values[node.frame];
+      if (!isMotionNumber(value)) return;
+
+      minFrame = Math.min(minFrame, node.frame);
+      maxFrame = Math.max(maxFrame, node.frame);
+      minValue = Math.min(minValue, value);
+      maxValue = Math.max(maxValue, value);
+    });
+
+    if (!Number.isFinite(minFrame) || maxFrame <= minFrame) return null;
+
+    return { minFrame, maxFrame, minValue, maxValue };
+  }, [selectedAxisRecord, selectedGeneratedSegment, selectedNodes]);
+  const regionScaleYSpan = Math.max(yRange.max - yRange.min, 0.0001);
+  const regionScaleRect = regionScaleBounds
+    ? {
+        left: ((regionScaleBounds.minFrame - visibleRange.start) / visibleFrameSpan) * 100,
+        top: 92 - ((regionScaleBounds.maxValue - yRange.min) / regionScaleYSpan) * 84,
+        width: ((regionScaleBounds.maxFrame - regionScaleBounds.minFrame) / visibleFrameSpan) * 100,
+        height: ((regionScaleBounds.maxValue - regionScaleBounds.minValue) / regionScaleYSpan) * 84,
+        hasValueSpan: regionScaleBounds.maxValue - regionScaleBounds.minValue > 1e-9,
+      }
+    : null;
   const copiedGeneratedSegmentPasteTarget = (() => {
     const targetNode = activeSelectedNodes.length === 1 ? activeSelectedNodes[0] : null;
 
@@ -2996,6 +3051,109 @@ export function GraphEditor() {
       const drag = nodeFrameDragRef.current;
       nodeFrameDragRef.current = null;
       justDraggedNodeFrameRef.current = drag?.moved ?? false;
+      window.removeEventListener("pointermove", handleWindowPointerMove);
+      window.removeEventListener("pointerup", handleWindowPointerEnd);
+      window.removeEventListener("pointercancel", handleWindowPointerEnd);
+    };
+
+    window.addEventListener("pointermove", handleWindowPointerMove);
+    window.addEventListener("pointerup", handleWindowPointerEnd);
+    window.addEventListener("pointercancel", handleWindowPointerEnd);
+  };
+
+  // Maya Region(Scale Keys): 박스 에지를 드래그하면 반대쪽 에지를 피벗으로 선택 키를 스케일.
+  // 프레임 반올림으로 두 키가 겹치면 뒤 키가 남는다 (기존 이동과 동일한 overwrite 정책).
+  const handleRegionScalePointerDown = (event: PointerEvent<HTMLButtonElement>, edge: RegionScaleEdge) => {
+    if (event.button !== 0 || kKeyRef.current) return;
+    if (!selectedAxisRecord || !regionScaleBounds) return;
+
+    const rect = plotSurfaceRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const origins = selectedNodes
+      .filter((node) => node.axisIndex === selectedAxisRecord.index)
+      .map((node) => {
+        const value = selectedAxisRecord.values[node.frame];
+        return isMotionNumber(value) ? { frame: node.frame, value } : null;
+      })
+      .filter((entry): entry is { frame: number; value: number } => entry !== null);
+
+    if (origins.length < 2) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const baseValues = [...selectedAxisRecord.values];
+    origins.forEach(({ frame }) => {
+      baseValues[frame] = null;
+    });
+
+    regionScaleDragRef.current = {
+      axisIndex: selectedAxisRecord.index,
+      edge,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      framesPerPixel: visibleFrameSpan / rect.width,
+      valuePerPixel:
+        (Math.max(yRange.max - yRange.min, 0.0001) * 100) / (PLOT_VALUE_SPAN_PERCENT * rect.height),
+      baseValues,
+      origins,
+      ...regionScaleBounds,
+      moved: false,
+    };
+
+    const handleWindowPointerMove = (moveEvent: globalThis.PointerEvent) => {
+      const drag = regionScaleDragRef.current;
+      if (!drag || moveEvent.pointerId !== event.pointerId) return;
+
+      const deltaX = moveEvent.clientX - drag.startClientX;
+      const deltaY = moveEvent.clientY - drag.startClientY;
+
+      if (!drag.moved && Math.abs(deltaX) < NODE_DRAG_DEAD_ZONE_PX && Math.abs(deltaY) < NODE_DRAG_DEAD_ZONE_PX) return;
+
+      const isTimeScale = drag.edge === "left" || drag.edge === "right";
+      const pivotFrame = drag.edge === "right" ? drag.minFrame : drag.maxFrame;
+      const pivotValue = drag.edge === "top" ? drag.minValue : drag.maxValue;
+      let scale: number;
+
+      if (isTimeScale) {
+        const edgeFrame = drag.edge === "right" ? drag.maxFrame : drag.minFrame;
+        const span = edgeFrame - pivotFrame;
+        if (span === 0) return;
+        scale = (edgeFrame + deltaX * drag.framesPerPixel - pivotFrame) / span;
+      } else {
+        const edgeValue = drag.edge === "top" ? drag.maxValue : drag.minValue;
+        const span = edgeValue - pivotValue;
+        if (Math.abs(span) < 1e-9) return;
+        scale = (edgeValue - deltaY * drag.valuePerPixel - pivotValue) / span;
+      }
+
+      if (!drag.moved) {
+        pushUndoSnapshot();
+        drag.moved = true;
+      }
+
+      const moves = drag.origins.map(({ frame, value }) =>
+        isTimeScale
+          ? {
+              toFrame: clamp(Math.round(pivotFrame + (frame - pivotFrame) * scale), 0, MAX_TIMELINE_FRAME),
+              value,
+            }
+          : { toFrame: frame, value: pivotValue + (value - pivotValue) * scale },
+      );
+
+      applyNodeFrameMove(drag.axisIndex, drag.baseValues, moves);
+
+      const nextFrames = [...new Set(moves.map((move) => move.toFrame))].sort((left, right) => left - right);
+      const nextSelected = nextFrames.map((frame) => ({ axisIndex: drag.axisIndex, frame }));
+      setSelectedNodes(nextSelected);
+      setSelectedNode(nextSelected[0] ?? null);
+    };
+
+    const handleWindowPointerEnd = (endEvent: globalThis.PointerEvent) => {
+      if (endEvent.pointerId !== event.pointerId) return;
+
+      regionScaleDragRef.current = null;
       window.removeEventListener("pointermove", handleWindowPointerMove);
       window.removeEventListener("pointerup", handleWindowPointerEnd);
       window.removeEventListener("pointercancel", handleWindowPointerEnd);
@@ -4674,6 +4832,46 @@ export function GraphEditor() {
               />
             ) : null}
             <div className="nodeOverlay">
+              {regionScaleRect ? (
+                <div
+                  className="regionScaleBox"
+                  style={{
+                    left: `${regionScaleRect.left}%`,
+                    top: `${regionScaleRect.top}%`,
+                    width: `${regionScaleRect.width}%`,
+                    height: `${Math.max(regionScaleRect.height, 0)}%`,
+                  }}
+                >
+                  <button
+                    aria-label="Scale keys from left edge"
+                    className="regionScaleHandle left"
+                    type="button"
+                    onPointerDown={(event) => handleRegionScalePointerDown(event, "left")}
+                  />
+                  <button
+                    aria-label="Scale keys from right edge"
+                    className="regionScaleHandle right"
+                    type="button"
+                    onPointerDown={(event) => handleRegionScalePointerDown(event, "right")}
+                  />
+                  {regionScaleRect.hasValueSpan ? (
+                    <>
+                      <button
+                        aria-label="Scale key values from top edge"
+                        className="regionScaleHandle top"
+                        type="button"
+                        onPointerDown={(event) => handleRegionScalePointerDown(event, "top")}
+                      />
+                      <button
+                        aria-label="Scale key values from bottom edge"
+                        className="regionScaleHandle bottom"
+                        type="button"
+                        onPointerDown={(event) => handleRegionScalePointerDown(event, "bottom")}
+                      />
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
               {selectedAxis !== null
                 ? renderedSelectedAxisNodePoints.map((point) => {
                     const node = { axisIndex: selectedAxis, frame: point.frame };
