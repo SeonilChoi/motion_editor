@@ -170,6 +170,7 @@ type GeneratedHandleDragState = SelectedGeneratedHandle & {
   centerFrame: number;
   centerValue: number;
   side: GeneratedHandleSide;
+  moved: boolean;
 };
 
 type DragState = VisibleRange & {
@@ -193,6 +194,7 @@ type NodeValueDragState = {
   startValue: number;
   startY: number;
   degreesPerPixel: number;
+  moved: boolean;
 };
 
 type NodeFrameDragState = {
@@ -1526,7 +1528,7 @@ export function GraphEditor() {
   const dragRef = useRef<DragState | null>(null);
   const plotSurfaceRef = useRef<HTMLDivElement>(null);
   const playheadDragRef = useRef(false);
-  const playbackRangeDragRef = useRef<"start" | "end" | null>(null);
+  const playbackRangeDragRef = useRef<{ edge: "start" | "end"; moved: boolean } | null>(null);
   const kKeyRef = useRef(false);
   const boxSelectRef = useRef<BoxSelectState | null>(null);
   const nodeValueDragRef = useRef<NodeValueDragState | null>(null);
@@ -2826,6 +2828,7 @@ export function GraphEditor() {
   // 키 수평 드래그: 다중 선택은 값 고정·시간만 함께 이동 (상대 간격 유지).
   const handleKeyNodePointerDown = (event: PointerEvent<HTMLButtonElement>, node: SelectedNode) => {
     if (event.button !== 0) return;
+    if (kKeyRef.current) return;
     event.stopPropagation();
 
     if (!selectedAxisRecord || selectedGeneratedSegment || node.axisIndex !== selectedAxisRecord.index) return;
@@ -3295,17 +3298,20 @@ export function GraphEditor() {
     event.preventDefault();
     event.stopPropagation();
 
-    pushUndoSnapshot();
     event.currentTarget.setPointerCapture(event.pointerId);
-    playbackRangeDragRef.current = edge;
-    setPlaybackRangeEdgeFromClientX(event.clientX, event.currentTarget.parentElement as HTMLElement, edge);
+    playbackRangeDragRef.current = { edge, moved: false };
   };
 
   const handlePlaybackRangeHandlePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    const edge = playbackRangeDragRef.current;
-    if (!edge) return;
+    const drag = playbackRangeDragRef.current;
+    if (!drag) return;
 
-    setPlaybackRangeEdgeFromClientX(event.clientX, event.currentTarget.parentElement as HTMLElement, edge);
+    if (!drag.moved) {
+      pushUndoSnapshot();
+      drag.moved = true;
+    }
+
+    setPlaybackRangeEdgeFromClientX(event.clientX, event.currentTarget.parentElement as HTMLElement, drag.edge);
   };
 
   const handlePlaybackRangeHandlePointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
@@ -3724,6 +3730,7 @@ export function GraphEditor() {
     side: GeneratedHandleSide,
   ) => {
     if (!selectedGeneratedSegment || !selectedAxisRecord || event.button !== 0) return;
+    if (kKeyRef.current) return;
 
     const centerValue = selectedAxisRecord.values[frame];
     if (!isMotionNumber(centerValue)) return;
@@ -3731,13 +3738,13 @@ export function GraphEditor() {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    pushUndoSnapshot();
     generatedHandleDragRef.current = {
       centerFrame: frame,
       centerValue,
       frame,
       segmentId: selectedGeneratedSegment.id,
       side,
+      moved: false,
     };
     setSelectedGeneratedHandle({ frame, segmentId: selectedGeneratedSegment.id });
     setSelectedNode(null);
@@ -3759,6 +3766,11 @@ export function GraphEditor() {
         : Math.max(0.1, drag.centerFrame - pointer.frame);
     const tangentRise = drag.side === "right" ? pointer.value - drag.centerValue : drag.centerValue - pointer.value;
     const angle = Math.atan2(tangentRise, framesToSeconds(length)) * (180 / Math.PI);
+
+    if (!drag.moved) {
+      pushUndoSnapshot();
+      drag.moved = true;
+    }
 
     updateGeneratedHandle(drag.segmentId, drag.frame, (handle) => {
       const isBroken = handle.rightAngle !== undefined;
@@ -3812,7 +3824,6 @@ export function GraphEditor() {
 
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
-      pushUndoSnapshot();
 
       const rect = event.currentTarget.getBoundingClientRect();
       nodeValueDragRef.current = {
@@ -3821,6 +3832,7 @@ export function GraphEditor() {
         startValue: targetValue,
         startY: event.clientY,
         degreesPerPixel: Math.max(yRange.max - yRange.min, 0.0001) / rect.height,
+        moved: false,
       };
       setIsDraggingNodeValue(true);
       return;
@@ -3869,6 +3881,11 @@ export function GraphEditor() {
     if (nodeValueDrag) {
       event.preventDefault();
       const nextValue = nodeValueDrag.startValue - (event.clientY - nodeValueDrag.startY) * nodeValueDrag.degreesPerPixel;
+
+      if (!nodeValueDrag.moved) {
+        pushUndoSnapshot();
+        nodeValueDrag.moved = true;
+      }
 
       updateNodeValue(nodeValueDrag.axisIndex, nodeValueDrag.frame, nextValue);
       return;
