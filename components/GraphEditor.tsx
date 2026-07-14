@@ -49,6 +49,26 @@ type SaveGapDialogState = {
   missingCount: number;
 };
 
+type ServerFileEntry = {
+  name: string;
+  relativePath: string;
+  size: number;
+  mtime: string;
+};
+
+type ServerBrowserState = {
+  files: ServerFileEntry[];
+  loading: boolean;
+  error: string;
+};
+
+type ServerSaveAsState = {
+  name: string;
+  strategy: MissingValueSaveStrategy;
+};
+
+type SaveDestination = "client" | "server";
+
 type EditorSnapshot = {
   axes: MotionAxis[];
   currentFrame: number;
@@ -1525,6 +1545,10 @@ export function GraphEditor() {
   const [copiedNodeRange, setCopiedNodeRange] = useState<CopiedNodeRange | null>(null);
   const [saveGapDialog, setSaveGapDialog] = useState<SaveGapDialogState | null>(null);
   const [saveGapMode, setSaveGapMode] = useState<MissingValueSaveStrategy>("linear");
+  const [savePendingDestination, setSavePendingDestination] = useState<SaveDestination>("client");
+  const [serverRelativePath, setServerRelativePath] = useState<string | null>(null);
+  const [serverBrowser, setServerBrowser] = useState<ServerBrowserState | null>(null);
+  const [serverSaveAsDialog, setServerSaveAsDialog] = useState<ServerSaveAsState | null>(null);
   const [nodeDegreeInput, setNodeDegreeInput] = useState("0");
   const [undoDepth, setUndoDepth] = useState(0);
   const [redoDepth, setRedoDepth] = useState(0);
@@ -2129,18 +2153,15 @@ export function GraphEditor() {
     generateSegmentMotionData(mode);
   };
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const text = await file.text();
+  const applyLoadedCsv = (text: string, displayName: string, serverPath: string | null) => {
     const parsedAxes = parseMotionCsv(text);
     const nextFrameCount = parsedAxes.reduce((max, axis) => Math.max(max, axis.values.length), 0);
     const nextMaxFrame = Math.max(0, nextFrameCount - 1);
 
     pushUndoSnapshot();
 
-    setFileName(file.name);
+    setFileName(displayName);
+    setServerRelativePath(serverPath);
     setAxes(parsedAxes);
     setGeneratedSegments([]);
     generatedSegmentIdRef.current = 0;
@@ -2154,7 +2175,122 @@ export function GraphEditor() {
     setError(parsedAxes.length === 0 ? "numeric row not found" : "");
     setYRange(buildDataYRange(parsedAxes));
     setVisibleRange({ start: 0, end: Math.max(nextMaxFrame, 1) });
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    applyLoadedCsv(text, file.name, null);
     event.target.value = "";
+  };
+
+  const openServerBrowser = async () => {
+    setServerBrowser({ files: [], loading: true, error: "" });
+    try {
+      const res = await fetch("/api/motions");
+      if (!res.ok) throw new Error(await res.text());
+      const files: ServerFileEntry[] = await res.json() as ServerFileEntry[];
+      setServerBrowser({ files, loading: false, error: "" });
+    } catch (err) {
+      setServerBrowser({ files: [], loading: false, error: String(err) });
+    }
+  };
+
+  const openServerFile = async (entry: ServerFileEntry) => {
+    setServerBrowser(null);
+    try {
+      const res = await fetch(`/api/motions/file?path=${encodeURIComponent(entry.relativePath)}`);
+      if (!res.ok) throw new Error(await res.text());
+      const text = await res.text();
+      applyLoadedCsv(text, entry.name, entry.relativePath);
+    } catch (err) {
+      setError(`Server open failed: ${String(err)}`);
+    }
+  };
+
+  const writeToServer = async (targetPath: string, missingValueStrategy: MissingValueSaveStrategy) => {
+    const csvContent = serializeMotionCsv(axes, missingValueStrategy);
+    try {
+      const res = await fetch(`/api/motions/file?path=${encodeURIComponent(targetPath)}`, {
+        method: "PUT",
+        body: csvContent,
+        headers: { "Content-Type": "text/plain" },
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        setError(`Server save failed: ${msg}`);
+        return;
+      }
+      setServerRelativePath(targetPath);
+      setFileName(targetPath.split("/").pop() ?? targetPath);
+      setError("");
+    } catch (err) {
+      setError(`Server save failed: ${String(err)}`);
+    }
+  };
+
+  const saveMotionCsvToServer = async (
+    missingValueStrategy: MissingValueSaveStrategy = "linear",
+    skipGapDialog = false,
+    overridePath?: string,
+  ) => {
+    if (axes.length === 0) return;
+
+    const rightmostNodeMismatch = getAxisRightmostNodeIndexMismatch(axes);
+    if (rightmostNodeMismatch) {
+      setSaveGapDialog(null);
+      setError(
+        `rightmost node index mismatch: axis ${formatAxisDisplayName(rightmostNodeMismatch.axis)} ends at ${
+          rightmostNodeMismatch.actualLastNodeIndex === null
+            ? "none"
+            : formatStatNumber(rightmostNodeMismatch.actualLastNodeIndex)
+        }, expected ${
+          rightmostNodeMismatch.expectedLastNodeIndex === null
+            ? "none"
+            : formatStatNumber(rightmostNodeMismatch.expectedLastNodeIndex)
+        }`,
+      );
+      return;
+    }
+
+    setError("");
+
+    const gapStats = getSaveGapStats(axes);
+
+    if (!skipGapDialog && gapStats.missingCount > 0) {
+      setSavePendingDestination("server");
+      setSaveGapDialog(gapStats);
+      return;
+    }
+
+    setSaveGapDialog(null);
+
+    const targetPath = overridePath ?? serverRelativePath;
+    if (!targetPath) {
+      setServerSaveAsDialog({ name: fileName || "motion.csv", strategy: missingValueStrategy });
+      return;
+    }
+
+    await writeToServer(targetPath, missingValueStrategy);
+  };
+
+  const handleServerSaveAsConfirm = async () => {
+    if (!serverSaveAsDialog) return;
+    const rawName = serverSaveAsDialog.name.trim();
+    if (!rawName) return;
+    const csvName = rawName.toLowerCase().endsWith(".csv") ? rawName : `${rawName}.csv`;
+    const strategy = serverSaveAsDialog.strategy;
+    setServerSaveAsDialog(null);
+    await writeToServer(csvName, strategy);
+  };
+
+  const handleGapDialogSave = () => {
+    if (savePendingDestination === "server") {
+      void saveMotionCsvToServer(saveGapMode, true);
+    } else {
+      void saveMotionCsv(saveGapMode, true);
+    }
   };
 
   const saveMotionCsv = async (
@@ -2185,6 +2321,7 @@ export function GraphEditor() {
     const gapStats = getSaveGapStats(axes);
 
     if (!skipGapDialog && gapStats.missingCount > 0) {
+      setSavePendingDestination("client");
       setSaveGapDialog(gapStats);
       return;
     }
@@ -3442,7 +3579,9 @@ export function GraphEditor() {
         </div>
         <div className="geSpacer" />
         <div className={error ? "geMeta error" : "geMeta"}>
-          {error || (fileName ? `${fileName}  ·  ${axes.length} axes  ·  ${frameCount} frames` : "no file")}
+          {error || (fileName
+            ? `${serverRelativePath ? "server: " : ""}${fileName}  ·  ${axes.length} axes  ·  ${frameCount} frames`
+            : "no file")}
         </div>
         <div className="geMenuBtns">
           <button className="geMenuBtn" type="button" onClick={() => fileInputRef.current?.click()}>
@@ -3450,14 +3589,28 @@ export function GraphEditor() {
               <path d="M8 11V3M8 3L5 6M8 3l3 3" />
               <path d="M3 11v2h10v-2" />
             </svg>
-            Import CSV
+            Open Client
           </button>
-          <button className="geMenuBtn primary" type="button" onClick={() => void saveMotionCsv()} disabled={axes.length === 0}>
+          <button className="geMenuBtn" type="button" onClick={() => void openServerBrowser()}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#c8c8c8" strokeWidth="1.6">
+              <rect x="2" y="3" width="12" height="10" rx="1" />
+              <path d="M5 3V2M11 3V2M2 7h12" />
+            </svg>
+            Open Server
+          </button>
+          <button className="geMenuBtn" type="button" onClick={() => void saveMotionCsv()} disabled={axes.length === 0}>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#c8c8c8" strokeWidth="1.6">
+              <path d="M3 2h8l3 3v9H3z" />
+              <path d="M5 2v4h5V2M6 14v-4h4v4" />
+            </svg>
+            Save Client
+          </button>
+          <button className="geMenuBtn primary" type="button" onClick={() => void saveMotionCsvToServer()} disabled={axes.length === 0}>
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#0d2733" strokeWidth="1.6">
               <path d="M3 2h8l3 3v9H3z" />
               <path d="M5 2v4h5V2M6 14v-4h4v4" />
             </svg>
-            Save
+            Save Server
           </button>
           <input
             ref={fileInputRef}
@@ -4163,7 +4316,7 @@ export function GraphEditor() {
                 <button type="button" onClick={() => setSaveGapDialog(null)}>
                   Cancel
                 </button>
-                <button type="button" className="primary" onClick={() => void saveMotionCsv(saveGapMode, true)}>
+                <button type="button" className="primary" onClick={handleGapDialogSave}>
                   Save
                 </button>
               </div>
@@ -4315,6 +4468,98 @@ export function GraphEditor() {
               Paste
             </button>
           )}
+        </div>
+      ) : null}
+      {serverBrowser ? (
+        <div className="saveGapDialogBackdrop" role="presentation" onClick={() => setServerBrowser(null)}>
+          <div
+            className="saveGapDialog serverBrowserDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="server-browser-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="saveGapDialogHeader">
+              <span id="server-browser-title">Open from Server</span>
+              <span>MOTION_DIR</span>
+            </div>
+            <div className="saveGapDialogBody serverBrowserBody">
+              {serverBrowser.loading ? (
+                <div className="serverBrowserStatus">Loading…</div>
+              ) : serverBrowser.error ? (
+                <div className="serverBrowserStatus error">{serverBrowser.error}</div>
+              ) : serverBrowser.files.length === 0 ? (
+                <div className="serverBrowserStatus">No CSV files found in server folder.</div>
+              ) : (
+                <ul className="serverFileList">
+                  {serverBrowser.files.map((entry) => (
+                    <li key={entry.relativePath}>
+                      <button
+                        type="button"
+                        className="serverFileItem"
+                        onClick={() => void openServerFile(entry)}
+                      >
+                        <span className="serverFileName">{entry.name}</span>
+                        <span className="serverFileMeta">
+                          {(entry.size / 1024).toFixed(1)} KB
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="saveGapDialogFooter">
+              <span />
+              <div className="saveGapActions">
+                <button type="button" onClick={() => void openServerBrowser()}>
+                  Refresh
+                </button>
+                <button type="button" onClick={() => setServerBrowser(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {serverSaveAsDialog ? (
+        <div className="saveGapDialogBackdrop" role="presentation">
+          <form
+            className="saveGapDialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="server-save-as-title"
+            onSubmit={(e) => { e.preventDefault(); void handleServerSaveAsConfirm(); }}
+          >
+            <div className="saveGapDialogHeader">
+              <span id="server-save-as-title">Save to Server</span>
+              <span>file name</span>
+            </div>
+            <div className="saveGapDialogBody">
+              <label className="saveGapField">
+                <span>File name (.csv)</span>
+                <input
+                  autoFocus
+                  value={serverSaveAsDialog.name}
+                  onChange={(e) =>
+                    setServerSaveAsDialog((cur) => cur ? { ...cur, name: e.target.value } : cur)
+                  }
+                />
+              </label>
+            </div>
+            <div className="saveGapDialogFooter">
+              <span>Saved to server MOTION_DIR folder.</span>
+              <div className="saveGapActions">
+                <button type="button" onClick={() => setServerSaveAsDialog(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary">
+                  Save
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>

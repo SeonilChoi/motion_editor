@@ -8,5 +8,8 @@ dist/
 # nested standalone clone (github.com/SeonilChoi/motion_editor) — tracked separately
 motion_editor/
 
+# default server CSV folder
+data/motions/
+
 # TypeScript incremental build info
 *.tsbuildinfo

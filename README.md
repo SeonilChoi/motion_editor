@@ -73,6 +73,33 @@ npm install
 - Pan, zoom, fit, focus, undo, and redo graph edits.
 - Save edited motion data back to CSV from the browser.
 
+### File I/O matrix
+
+| | Save to client | Save to server |
+|---|---|---|
+| **Open from client** | Open Client → Save Client | Open Client → Save Server |
+| **Open from server** | Open Server → Save Client | Open Server → Save Server |
+
+- **Open Client** — opens a local file from your browser machine (the original file picker).
+- **Open Server** — lists CSV files in the server's `MOTION_DIR` folder and loads the selected file.
+- **Save Client** — downloads the edited CSV to your browser machine.
+- **Save Server** — writes the edited CSV back to the server's `MOTION_DIR` folder. If the file was opened from the server it overwrites in place; otherwise a file-name dialog appears.
+
+### Server folder (MOTION_DIR)
+
+Copy `.env.example` to `.env.local` and set `MOTION_DIR` to the absolute path of the folder that
+contains motion CSV files on the server PC:
+
+```bash
+cp .env.example .env.local
+# edit .env.local
+MOTION_DIR=/home/hexapod/motions
+```
+
+If `MOTION_DIR` is not set, the folder `data/motions/` inside the project root is used and
+created automatically on first access. Only `.csv` files in that single flat directory are
+exposed; sub-directories and path traversal are blocked.
+
 ## Run
 
 ```bash
