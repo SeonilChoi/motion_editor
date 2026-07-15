@@ -736,6 +736,16 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
+.bufferCurve {
+  fill: none;
+  pointer-events: none;
+  stroke: rgba(168, 168, 168, 0.55);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
 .nodeOverlay {
   inset: 0;
   pointer-events: none;

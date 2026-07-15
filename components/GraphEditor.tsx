@@ -76,6 +76,7 @@ type AxisInfinity = { pre: InfinityMode; post: InfinityMode };
 type EditorSnapshot = {
   axes: MotionAxis[];
   axisInfinity: Record<number, AxisInfinity>;
+  bufferCurves: Record<number, MotionValue[]>;
   currentFrame: number;
   error: string;
   fileName: string;
@@ -1681,6 +1682,8 @@ export function GraphEditor() {
   const [playbackRange, setPlaybackRange] = useState<VisibleRange>({ start: 0, end: DEFAULT_TIMELINE_MAX_FRAME });
   const [yRange, setYRange] = useState<DegreeRange>({ min: -90, max: 90 });
   const [axisInfinity, setAxisInfinity] = useState<Record<number, AxisInfinity>>({});
+  const [bufferCurves, setBufferCurves] = useState<Record<number, MotionValue[]>>({});
+  const [showBufferCurves, setShowBufferCurves] = useState(true);
   const [isPanning, setIsPanning] = useState(false);
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
   const [isDraggingNodeValue, setIsDraggingNodeValue] = useState(false);
@@ -1708,6 +1711,7 @@ export function GraphEditor() {
   const createEditorSnapshot = (): EditorSnapshot => ({
     axes: cloneMotionAxes(axes),
     axisInfinity: { ...axisInfinity },
+    bufferCurves: { ...bufferCurves },
     currentFrame,
     error,
     fileName,
@@ -1728,6 +1732,7 @@ export function GraphEditor() {
   const restoreEditorSnapshot = (snapshot: EditorSnapshot) => {
     setAxes(cloneMotionAxes(snapshot.axes));
     setAxisInfinity({ ...snapshot.axisInfinity });
+    setBufferCurves({ ...snapshot.bufferCurves });
     setGeneratedSegments(cloneGeneratedSegments(snapshot.generatedSegments));
     generatedSegmentIdRef.current = snapshot.generatedSegmentId;
     setFileName(snapshot.fileName);
@@ -1959,6 +1964,15 @@ export function GraphEditor() {
 
     return { prePoints, postPoints };
   }, [selectedAxisRecord, axisInfinity, visibleRange, yRange]);
+  // Maya Buffer Curve: 선택 축의 버퍼 스냅샷을 회색 고스트 폴리라인으로 표시.
+  const bufferCurvePolylines = useMemo(() => {
+    if (!showBufferCurves || !selectedAxisRecord) return [];
+
+    const buffered = bufferCurves[selectedAxisRecord.index];
+    if (!buffered) return [];
+
+    return toPlotSegments(buffered, visibleRange, yRange.min, yRange.max).map((points) => toPolyline(points));
+  }, [showBufferCurves, selectedAxisRecord, bufferCurves, visibleRange, yRange]);
   const copiedGeneratedSegmentPasteTarget = (() => {
     const targetNode = activeSelectedNodes.length === 1 ? activeSelectedNodes[0] : null;
 
@@ -2435,6 +2449,7 @@ export function GraphEditor() {
     setServerRelativePath(serverPath);
     setAxes(parsedAxes);
     setAxisInfinity({});
+    setBufferCurves({});
     setGeneratedSegments([]);
     generatedSegmentIdRef.current = 0;
     setSelectedGeneratedSegmentKey(null);
@@ -3803,6 +3818,51 @@ export function GraphEditor() {
     );
   };
 
+  // Maya Buffer Curve: 현재 커브를 버퍼로 저장해 회색 고스트로 비교하고, Swap으로 되돌린다.
+  const snapshotBufferCurve = () => {
+    if (!selectedAxisRecord) return;
+
+    pushUndoSnapshot();
+    setBufferCurves((previous) => ({
+      ...previous,
+      [selectedAxisRecord.index]: [...selectedAxisRecord.values],
+    }));
+    setShowBufferCurves(true);
+  };
+
+  const toggleShowBufferCurves = () => {
+    setShowBufferCurves((previous) => !previous);
+  };
+
+  const swapBufferCurve = () => {
+    if (!selectedAxisRecord) return;
+
+    const buffered = bufferCurves[selectedAxisRecord.index];
+    if (!buffered) return;
+
+    pushUndoSnapshot();
+
+    const currentValues = [...selectedAxisRecord.values];
+
+    setAxes((current) =>
+      current.map((axis) =>
+        axis.index === selectedAxisRecord.index ? { ...axis, values: [...buffered] } : axis,
+      ),
+    );
+    setBufferCurves((previous) => ({
+      ...previous,
+      [selectedAxisRecord.index]: currentValues,
+    }));
+    // 스왑 후 선택 노드/세그먼트가 사라진 프레임을 가리킬 수 있어 선택을 정리한다.
+    setSelectedNode(null);
+    setSelectedNodes([]);
+    setNodeSelectionKind(null);
+    setSelectedGeneratedSegmentKey(null);
+    setSelectedGeneratedHandle(null);
+  };
+
+  const hasSelectedAxisBuffer = selectedAxisRecord !== null && bufferCurves[selectedAxisRecord.index] !== undefined;
+
   const getPlotPointerPercent = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
 
@@ -4681,6 +4741,44 @@ export function GraphEditor() {
 
         <div className="geTDiv" />
 
+        <button
+          className="geTool"
+          type="button"
+          title="Buffer Curve Snapshot (현재 커브를 고스트로 저장)"
+          disabled={!selectedAxisRecord}
+          onClick={snapshotBufferCurve}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#d0d0d0" strokeWidth="1.4">
+            <rect x="2" y="5" width="9" height="9" rx="1" />
+            <path d="M5 5V3a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-2" />
+          </svg>
+        </button>
+        <button
+          className={showBufferCurves ? "geTool active" : "geTool"}
+          type="button"
+          title="Show/Hide Buffer Curves"
+          disabled={Object.keys(bufferCurves).length === 0}
+          onClick={toggleShowBufferCurves}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#d0d0d0" strokeWidth="1.4">
+            <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8Z" />
+            <circle cx="8" cy="8" r="2" />
+          </svg>
+        </button>
+        <button
+          className="geTool"
+          type="button"
+          title="Swap Buffer Curve (버퍼 ↔ 현재 커브)"
+          disabled={!hasSelectedAxisBuffer}
+          onClick={swapBufferCurve}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#d0d0d0" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 5h10l-2.5-2.5M14 11H4l2.5 2.5" />
+          </svg>
+        </button>
+
+        <div className="geTDiv" />
+
         {/* stats */}
         <span className="geStatLbl">Frame</span>
         <input
@@ -4934,6 +5032,10 @@ export function GraphEditor() {
                 strokeWidth={1.4}
                 vectorEffect="non-scaling-stroke"
               />
+
+              {bufferCurvePolylines.map((points, bufferIndex) => (
+                <polyline className="bufferCurve" key={`buffer-${bufferIndex}`} points={points} />
+              ))}
 
               {renderedAxes.map((axis) => {
                 const axisIndex = axes.findIndex((candidate) => candidate.index === axis.index);
