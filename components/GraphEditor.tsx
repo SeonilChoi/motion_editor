@@ -1662,6 +1662,7 @@ export function GraphEditor() {
   const nodeValueDragRef = useRef<NodeValueDragState | null>(null);
   const nodeFrameDragRef = useRef<NodeFrameDragState | null>(null);
   const regionScaleDragRef = useRef<RegionScaleDragState | null>(null);
+  const snapValuesRef = useRef(false);
   const justDraggedNodeFrameRef = useRef(false);
   const generatedHandleDragRef = useRef<GeneratedHandleDragState | null>(null);
   const generatedSegmentIdRef = useRef(0);
@@ -1686,6 +1687,7 @@ export function GraphEditor() {
   const [showBufferCurves, setShowBufferCurves] = useState(true);
   const [hiddenAxes, setHiddenAxes] = useState<Set<number>>(new Set());
   const [isolateSelectedAxis, setIsolateSelectedAxis] = useState(false);
+  const [snapValues, setSnapValues] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
   const [isDraggingPlayhead, setIsDraggingPlayhead] = useState(false);
   const [isDraggingNodeValue, setIsDraggingNodeValue] = useState(false);
@@ -3170,7 +3172,7 @@ export function GraphEditor() {
 
       const moves = drag.origins.map(({ frame, value }) => ({
         toFrame: clamp(frame + deltaFrames, 0, MAX_TIMELINE_FRAME),
-        value: value + deltaValue,
+        value: applyValueSnap(value + deltaValue),
       }));
 
       applyNodeFrameMove(drag.axisIndex, drag.baseValues, moves);
@@ -3280,7 +3282,7 @@ export function GraphEditor() {
               toFrame: clamp(Math.round(pivotFrame + (frame - pivotFrame) * scale), 0, MAX_TIMELINE_FRAME),
               value,
             }
-          : { toFrame: frame, value: pivotValue + (value - pivotValue) * scale },
+          : { toFrame: frame, value: applyValueSnap(pivotValue + (value - pivotValue) * scale) },
       );
 
       applyNodeFrameMove(drag.axisIndex, drag.baseValues, moves);
@@ -3890,6 +3892,17 @@ export function GraphEditor() {
     setIsolateSelectedAxis((previous) => !previous);
   };
 
+  // Maya Snap 파리티: 드래그 값 편집을 정수 grid에 스냅. ref는 드래그 window 리스너
+  // 클로저(다운 시점 고정)에서도 최신 토글 상태를 읽기 위한 것.
+  const toggleSnapValues = () => {
+    setSnapValues((previous) => {
+      snapValuesRef.current = !previous;
+      return !previous;
+    });
+  };
+
+  const applyValueSnap = (value: number) => (snapValuesRef.current ? Math.round(value) : value);
+
   const getPlotPointerPercent = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
 
@@ -4461,7 +4474,7 @@ export function GraphEditor() {
         nodeValueDrag.moved = true;
       }
 
-      updateNodeValue(nodeValueDrag.axisIndex, nodeValueDrag.frame, nextValue);
+      updateNodeValue(nodeValueDrag.axisIndex, nodeValueDrag.frame, applyValueSnap(nextValue));
       return;
     }
 
@@ -4813,6 +4826,18 @@ export function GraphEditor() {
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#d0d0d0" strokeWidth="1.4">
             <rect x="1.5" y="3" width="13" height="10" rx="1.5" />
             <path d="M4.5 8s1.3-2.3 3.5-2.3S11.5 8 11.5 8s-1.3 2.3-3.5 2.3S4.5 8 4.5 8Z" />
+          </svg>
+        </button>
+        <button
+          className={snapValues ? "geTool active" : "geTool"}
+          type="button"
+          title="Snap Values (드래그 값 정수 스냅)"
+          onClick={toggleSnapValues}
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#d0d0d0" strokeWidth="1.4" strokeLinecap="round">
+            <path d="M4 2v6a4 4 0 0 0 8 0V2" />
+            <path d="M4 2h3M9 2h3" />
+            <path d="M4 5h3M9 5h3" strokeWidth="1.1" />
           </svg>
         </button>
 
