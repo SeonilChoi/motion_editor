@@ -1,5 +1,6 @@
 "use client";
 
+import JSZip from "jszip";
 import {
   ChangeEvent,
   Fragment,
@@ -67,7 +68,7 @@ type ServerSaveAsState = {
   strategy: MissingValueSaveStrategy;
 };
 
-type SaveDestination = "client" | "server";
+type SaveDestination = "client" | "server" | "bundle";
 
 type InfinityMode = "constant" | "cycle" | "oscillate" | "linear";
 
@@ -760,6 +761,47 @@ const parseMotionMeta = (text: string | null, axes: MotionAxis[]): MotionMeta =>
   } catch {
     return emptyMeta;
   }
+};
+
+// ---- 모션 번들 (.zip: csv + meta 한 파일) ----
+// csv/meta를 zip 하나로 묶어 PC 간 이동 시 meta 누락 위험을 없앤다.
+// 엔트리 이름은 고정(canonical)이라 바깥 zip 파일명과 무관하게 파싱된다.
+const MOTION_BUNDLE_CSV_ENTRY = "motion.csv";
+const MOTION_BUNDLE_META_ENTRY = "motion.csv.meta.json";
+
+const serializeMotionBundle = (
+  axes: MotionAxis[],
+  generatedSegments: GeneratedSegment[],
+  axisInfinity: Record<number, AxisInfinity>,
+  missingValueStrategy: MissingValueSaveStrategy,
+): Promise<Blob> => {
+  const zip = new JSZip();
+  zip.file(MOTION_BUNDLE_CSV_ENTRY, serializeMotionCsv(axes, missingValueStrategy));
+  zip.file(MOTION_BUNDLE_META_ENTRY, serializeMotionMeta(axes, generatedSegments, axisInfinity));
+  return zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+};
+
+// zip에서 csv/meta 텍스트를 꺼낸다. canonical 엔트리 우선, 없으면 확장자로 폴백.
+// zip이 아니거나 csv 엔트리가 없으면 null (호출부에서 에러 표시).
+const parseMotionBundle = async (file: Blob): Promise<{ csvText: string; metaText: string | null } | null> => {
+  try {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const csvEntry = zip.file(MOTION_BUNDLE_CSV_ENTRY) ?? zip.file(/\.csv$/i)[0] ?? null;
+    if (!csvEntry) return null;
+
+    const metaEntry = zip.file(MOTION_BUNDLE_META_ENTRY) ?? zip.file(/\.csv\.meta\.json$/i)[0] ?? null;
+    return {
+      csvText: await csvEntry.async("string"),
+      metaText: metaEntry ? await metaEntry.async("string") : null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const ensureZipFileName = (name: string) => {
+  const baseName = name.trim().replace(/\.zip$/i, "").replace(/\.csv$/i, "");
+  return `${baseName || "motion"}.zip`;
 };
 
 const buildInterpolationRatio = (ratio: number, mode: SegmentInterpolationMode) => {
@@ -2635,6 +2677,20 @@ export function GraphEditor() {
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
+
+    // 번들(zip)이 있으면 우선 처리: csv+meta가 한 파일이라 meta 누락이 원천적으로 불가능하다.
+    const bundleFile = files.find((file) => file.name.toLowerCase().endsWith(".zip"));
+    if (bundleFile) {
+      const bundle = await parseMotionBundle(bundleFile);
+      event.target.value = "";
+      if (!bundle) {
+        setError(`bundle open failed: no csv entry in ${bundleFile.name}`);
+        return;
+      }
+      applyLoadedCsv(bundle.csvText, ensureCsvFileName(bundleFile.name.replace(/\.zip$/i, "")), null, bundle.metaText);
+      return;
+    }
+
     const csvFile = files.find((file) => file.name.toLowerCase().endsWith(".csv"));
     if (!csvFile) {
       event.target.value = "";
@@ -2777,6 +2833,8 @@ export function GraphEditor() {
   const handleGapDialogSave = () => {
     if (savePendingDestination === "server") {
       void saveMotionCsvToServer(saveGapMode, true);
+    } else if (savePendingDestination === "bundle") {
+      void saveMotionBundle(saveGapMode, true);
     } else {
       void saveMotionCsv(saveGapMode, true);
     }
@@ -2817,23 +2875,9 @@ export function GraphEditor() {
 
     setSaveGapDialog(null);
 
+    // Export CSV: 순수 CSV만 내려받는다(외부 소비자용). 편집 상태(핸들)까지 보존하려면 Save Bundle을 사용.
     const nextFileName = ensureCsvFileName(fileName || "motion.csv");
     const csvBlob = new Blob([serializeMotionCsv(axes, missingValueStrategy)], { type: "text/csv;charset=utf-8" });
-    // 세그먼트(핸들)가 있으면 사이드카 meta JSON을 함께 내려받아 다음에 CSV와 같이 열 수 있게 한다.
-    const downloadMotionMeta = (csvFileName: string) => {
-      if (generatedSegments.length === 0) return;
-
-      const metaBlob = new Blob([serializeMotionMeta(axes, generatedSegments, axisInfinity)], {
-        type: "application/json;charset=utf-8",
-      });
-      const metaUrl = URL.createObjectURL(metaBlob);
-      const metaLink = document.createElement("a");
-
-      metaLink.href = metaUrl;
-      metaLink.download = motionMetaPathFor(csvFileName);
-      metaLink.click();
-      URL.revokeObjectURL(metaUrl);
-    };
     const pickerWindow = window as SaveFilePickerWindow;
 
     if (pickerWindow.showSaveFilePicker) {
@@ -2852,7 +2896,6 @@ export function GraphEditor() {
         await writable.write(csvBlob);
         await writable.close();
         setFileName(nextFileName);
-        downloadMotionMeta(fileHandle.name ?? nextFileName);
         return;
       } catch (saveError) {
         if (saveError instanceof DOMException && saveError.name === "AbortError") {
@@ -2869,7 +2912,78 @@ export function GraphEditor() {
     downloadLink.click();
     URL.revokeObjectURL(csvUrl);
     setFileName(nextFileName);
-    downloadMotionMeta(nextFileName);
+  };
+
+  // Save Bundle: csv+meta를 zip 하나로 내려받아 다른 PC로 파일 하나만 옮기면 편집 상태까지 보존된다.
+  const saveMotionBundle = async (
+    missingValueStrategy: MissingValueSaveStrategy = "linear",
+    skipGapDialog = false,
+  ) => {
+    if (axes.length === 0) return;
+
+    const rightmostNodeMismatch = getAxisRightmostNodeIndexMismatch(axes);
+    if (rightmostNodeMismatch) {
+      setSaveGapDialog(null);
+      setError(
+        `rightmost node index mismatch: axis ${formatAxisDisplayName(rightmostNodeMismatch.axis)} ends at ${
+          rightmostNodeMismatch.actualLastNodeIndex === null
+            ? "none"
+            : formatStatNumber(rightmostNodeMismatch.actualLastNodeIndex)
+        }, expected ${
+          rightmostNodeMismatch.expectedLastNodeIndex === null
+            ? "none"
+            : formatStatNumber(rightmostNodeMismatch.expectedLastNodeIndex)
+        }`,
+      );
+      return;
+    }
+
+    setError("");
+
+    const gapStats = getSaveGapStats(axes);
+
+    if (!skipGapDialog && gapStats.missingCount > 0) {
+      setSavePendingDestination("bundle");
+      setSaveGapDialog(gapStats);
+      return;
+    }
+
+    setSaveGapDialog(null);
+
+    const nextZipName = ensureZipFileName(fileName || "motion");
+    const bundleBlob = await serializeMotionBundle(axes, generatedSegments, axisInfinity, missingValueStrategy);
+    const pickerWindow = window as SaveFilePickerWindow;
+
+    if (pickerWindow.showSaveFilePicker) {
+      try {
+        const fileHandle = await pickerWindow.showSaveFilePicker({
+          suggestedName: nextZipName,
+          types: [
+            {
+              accept: { "application/zip": [".zip"] },
+              description: "Motion bundle (CSV + meta)",
+            },
+          ],
+        });
+        const writable = await fileHandle.createWritable();
+
+        await writable.write(bundleBlob);
+        await writable.close();
+        return;
+      } catch (saveError) {
+        if (saveError instanceof DOMException && saveError.name === "AbortError") {
+          return;
+        }
+      }
+    }
+
+    const bundleUrl = URL.createObjectURL(bundleBlob);
+    const downloadLink = document.createElement("a");
+
+    downloadLink.href = bundleUrl;
+    downloadLink.download = nextZipName;
+    downloadLink.click();
+    URL.revokeObjectURL(bundleUrl);
   };
 
   const getAxisContextMenuPosition = (clientX: number, clientY: number) => ({
@@ -4908,12 +5022,31 @@ export function GraphEditor() {
             </svg>
             Open Server
           </button>
-          <button className="geMenuBtn" type="button" onClick={() => void saveMotionCsv()} disabled={axes.length === 0}>
+          <button
+            className="geMenuBtn"
+            type="button"
+            title="CSV+편집 상태(meta)를 zip 하나로 저장 — 다른 PC로 이동 시 권장"
+            onClick={() => void saveMotionBundle()}
+            disabled={axes.length === 0}
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#c8c8c8" strokeWidth="1.6">
+              <path d="M3 2h8l3 3v9H3z" />
+              <path d="M8 6v5M8 11l-2-2M8 11l2-2" />
+            </svg>
+            Save Bundle
+          </button>
+          <button
+            className="geMenuBtn"
+            type="button"
+            title="순수 CSV만 저장 — 로봇 등 외부 소비자 전달용 (편집 상태 미포함)"
+            onClick={() => void saveMotionCsv()}
+            disabled={axes.length === 0}
+          >
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#c8c8c8" strokeWidth="1.6">
               <path d="M3 2h8l3 3v9H3z" />
               <path d="M5 2v4h5V2M6 14v-4h4v4" />
             </svg>
-            Save Client
+            Export CSV
           </button>
           <button className="geMenuBtn primary" type="button" onClick={() => void saveMotionCsvToServer()} disabled={axes.length === 0}>
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#0d2733" strokeWidth="1.6">
@@ -4926,7 +5059,7 @@ export function GraphEditor() {
             ref={fileInputRef}
             className="hiddenInput"
             type="file"
-            accept=".csv,text/csv,.json,application/json"
+            accept=".csv,text/csv,.json,application/json,.zip,application/zip"
             multiple
             onChange={handleFileChange}
           />
