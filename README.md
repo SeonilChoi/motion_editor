@@ -112,13 +112,21 @@ npm install
 
 | | 클라이언트에 저장 | 서버에 저장 |
 |---|---|---|
-| **클라이언트에서 열기** | Open Client → Save Client | Open Client → Save Server |
-| **서버에서 열기** | Open Server → Save Client | Open Server → Save Server |
+| **클라이언트에서 열기** | Open Client → Save Bundle / Export CSV | Open Client → Save Server |
+| **서버에서 열기** | Open Server → Save Bundle / Export CSV | Open Server → Save Server |
 
-- **Open Client** — 브라우저가 실행 중인 PC의 로컬 파일을 엽니다 (파일 선택창).
-- **Open Server** — 서버 PC의 `MOTION_DIR` 폴더에 있는 CSV 목록을 보여 주고, 선택한 파일을 불러옵니다.
-- **Save Client** — 편집한 CSV를 브라우저 PC로 다운로드합니다.
-- **Save Server** — 편집한 CSV를 서버의 `MOTION_DIR` 폴더에 씁니다. 서버에서 연 파일이면 같은 이름으로 덮어쓰고, 아니면 파일명 입력 창이 뜹니다.
+- **Open Client** — 브라우저가 실행 중인 PC의 로컬 파일을 엽니다 (파일 선택창). `.zip` 번들 하나, 또는 `.csv`(+선택적으로 `.csv.meta.json`)를 함께 다중 선택할 수 있습니다.
+- **Open Server** — 서버 PC의 `MOTION_DIR` 폴더에 있는 CSV 목록을 보여 주고, 선택한 파일을 불러옵니다. 짝이 되는 meta가 있으면 핸들 편집 상태도 함께 복원됩니다.
+- **Save Bundle** — CSV+편집 상태(meta)를 zip 하나로 브라우저 PC에 다운로드합니다. **다른 PC로 모션을 옮길 때 권장** — 파일 하나만 옮기면 베지어 핸들 편집을 이어갈 수 있습니다.
+- **Export CSV** — 순수 CSV만 다운로드합니다. 로봇 등 외부 소비자에게 전달할 때 사용하며, 편집 상태(핸들)는 포함되지 않습니다.
+- **Save Server** — 편집한 CSV와 편집 상태(`<파일명>.csv.meta.json`)를 서버의 `MOTION_DIR` 폴더에 씁니다. 서버에서 연 파일이면 같은 이름으로 덮어쓰고, 아니면 파일명 입력 창이 뜹니다.
+- **Export / Import Library** — Open Server 다이얼로그 하단 버튼. 서버 라이브러리 전체(csv+meta 쌍 전부)를 zip 하나로 내려받거나, 그 zip을 다른 PC의 서버에 업로드해 통째로 복원합니다. 로컬 설치를 다른 PC로 옮길 때 사용합니다.
+
+### 편집 상태(meta) 영속화
+
+CSV에는 프레임별 숫자 값만 저장됩니다(외부 소비자 호환). 생성 세그먼트·베지어 핸들(각도/길이)·Pre/Post Infinity·축 이름은
+`<파일명>.csv.meta.json` 사이드카에 저장되며, Save Server/Save Bundle이 자동으로 함께 기록합니다.
+meta가 없는 CSV도 종전과 동일하게 열리고, meta가 손상된 경우 해당 항목만 조용히 무시됩니다.
 
 ### 서버 폴더 (MOTION_DIR)
 
