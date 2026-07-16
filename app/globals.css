@@ -283,6 +283,11 @@ button {
   cursor: not-allowed;
 }
 
+.axisContextMenuItem.active {
+  background: #3d5a52;
+  color: #7ec24f;
+}
+
 .curvePane {
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr) 440px;
@@ -720,6 +725,27 @@ button {
   opacity: 0.34;
 }
 
+.infinityCurve {
+  fill: none;
+  pointer-events: none;
+  stroke: rgba(255, 211, 79, 0.55);
+  stroke-dasharray: 5 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.45;
+  vector-effect: non-scaling-stroke;
+}
+
+.bufferCurve {
+  fill: none;
+  pointer-events: none;
+  stroke: rgba(168, 168, 168, 0.55);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+
 .nodeOverlay {
   inset: 0;
   pointer-events: none;
@@ -806,6 +832,60 @@ button {
   stroke: rgba(255, 155, 165, 0.9);
   stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
+}
+
+.regionScaleBox {
+  background: rgba(98, 214, 255, 0.05);
+  border: 1px dashed rgba(98, 214, 255, 0.65);
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.regionScaleHandle {
+  appearance: none;
+  background: rgba(98, 214, 255, 0.28);
+  border: 1px solid rgba(98, 214, 255, 0.9);
+  padding: 0;
+  pointer-events: auto;
+  position: absolute;
+}
+
+.regionScaleHandle:hover,
+.regionScaleHandle:active {
+  background: rgba(98, 214, 255, 0.6);
+}
+
+.regionScaleHandle.left {
+  bottom: 0;
+  cursor: ew-resize;
+  left: -4px;
+  top: 0;
+  width: 7px;
+}
+
+.regionScaleHandle.right {
+  bottom: 0;
+  cursor: ew-resize;
+  right: -4px;
+  top: 0;
+  width: 7px;
+}
+
+.regionScaleHandle.top {
+  cursor: ns-resize;
+  height: 7px;
+  left: 0;
+  right: 0;
+  top: -4px;
+}
+
+.regionScaleHandle.bottom {
+  bottom: -4px;
+  cursor: ns-resize;
+  height: 7px;
+  left: 0;
+  right: 0;
 }
 
 .generatedKeyHandleDot {
@@ -1658,4 +1738,783 @@ button {
   .curvePane {
     grid-template-rows: 36px minmax(0, 1fr) 120px;
   }
+}
+
+/* ============================================================
+   Graph Editor (Maya-style) chrome — Graph Editor.dc.html
+   ============================================================ */
+
+.geRoot {
+  background: #2d2d2d;
+  color: #c8c8c8;
+  display: flex;
+  flex-direction: column;
+  font-family: "Segoe UI", Tahoma, system-ui, sans-serif;
+  font-size: 12px;
+  height: 100vh;
+  user-select: none;
+  width: 100vw;
+}
+
+.geRoot input {
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+}
+
+.geUnit {
+  color: #666;
+  font-size: 11px;
+}
+
+/* ---- menu bar ---- */
+.geMenu {
+  align-items: center;
+  background: #3b3b3b;
+  border-bottom: 1px solid #1e1e1e;
+  display: flex;
+  flex: none;
+  gap: 2px;
+  height: 26px;
+  padding: 0 4px;
+}
+
+.geBrand {
+  align-items: center;
+  color: #d8d8d8;
+  display: flex;
+  font-size: 11.5px;
+  font-weight: 600;
+  gap: 2px;
+  padding: 0 10px 0 4px;
+}
+
+.geBrandDot {
+  background: #4ca6d6;
+  border-radius: 2px;
+  display: inline-block;
+  height: 9px;
+  margin-right: 6px;
+  width: 9px;
+}
+
+.geVDiv {
+  background: #555;
+  height: 15px;
+  margin: 0 4px;
+  width: 1px;
+}
+
+.geMenuItems {
+  display: flex;
+  gap: 1px;
+}
+
+.geMenuItem {
+  border-radius: 3px;
+  color: #c8c8c8;
+  cursor: default;
+  padding: 4px 9px;
+}
+
+.geMenuItem:hover {
+  background: #4d4d4d;
+}
+
+.geSpacer {
+  flex: 1;
+}
+
+.geMeta {
+  color: #8a8a8a;
+  font-size: 11px;
+  margin-right: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geMeta.error {
+  color: #ff9a8c;
+}
+
+.geMenuBtns {
+  display: flex;
+  gap: 6px;
+}
+
+.geMenuBtn {
+  align-items: center;
+  background: #4a4a4a;
+  border: 1px solid #5a5a5a;
+  border-radius: 3px;
+  color: #c8c8c8;
+  display: flex;
+  gap: 6px;
+  padding: 4px 11px;
+}
+
+.geMenuBtn:hover:not(:disabled) {
+  background: #565656;
+}
+
+.geMenuBtn.primary {
+  background: #4ca6d6;
+  border-color: #62b3de;
+  color: #0d2733;
+  font-weight: 600;
+}
+
+.geMenuBtn.primary:hover:not(:disabled) {
+  background: #5cb1de;
+}
+
+.geMenuBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ---- toolbar ---- */
+.geToolbar {
+  align-items: center;
+  background: #333;
+  border-bottom: 1px solid #1e1e1e;
+  display: flex;
+  flex: none;
+  gap: 3px;
+  height: 37px;
+  padding: 0 6px;
+}
+
+.geTool {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: #d0d0d0;
+  display: flex;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.geTool:hover:not(:disabled) {
+  background: #4a4a4a;
+}
+
+.geTool.active {
+  background: #5285a6;
+}
+
+.geTool:disabled {
+  cursor: not-allowed;
+}
+
+.geTool.dead {
+  opacity: 0.4;
+}
+
+.geTool:disabled:not(.dead) {
+  opacity: 0.55;
+}
+
+.geTDiv {
+  background: #4a4a4a;
+  height: 20px;
+  margin: 0 4px;
+  width: 1px;
+}
+
+.geStatLbl {
+  color: #8a8a8a;
+  font-size: 11px;
+  margin: 0 3px;
+}
+
+.geStatIn {
+  background: #242424;
+  border: 1px solid #151515;
+  border-radius: 3px;
+  color: #d8d8d8;
+  font-size: 11px;
+  height: 22px;
+  outline: none;
+  padding: 0 6px;
+  text-align: right;
+}
+
+/* ---- main row ---- */
+.geMain {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* shared panel header bar */
+.gePanelHdr {
+  align-items: center;
+  background: #3b3b3b;
+  border-bottom: 1px solid #1e1e1e;
+  color: #9a9a9a;
+  display: flex;
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 6px;
+  height: 24px;
+  letter-spacing: 0.3px;
+  padding: 0 10px;
+}
+
+.gePanelHdrMeta,
+.gePanelHdrNote {
+  color: #666;
+  font-family: ui-monospace, monospace;
+  font-weight: 400;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gePanelHdrNote {
+  font-family: inherit;
+  margin-left: 6px;
+}
+
+/* ---- outliner ---- */
+.geOutliner {
+  background: #333;
+  border-right: 1px solid #1e1e1e;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 250px;
+}
+
+.geAxisOps {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.geAxisOps button {
+  background: #444;
+  border: 1px solid #555;
+  border-radius: 3px;
+  color: #d0d0d0;
+  height: 17px;
+  line-height: 1;
+  width: 20px;
+}
+
+.geAxisOps button:hover:not(:disabled) {
+  background: #50606c;
+  border-color: #527ca8;
+  color: #fff;
+}
+
+.geAxisOps button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.geTree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.geTreeRoot {
+  align-items: center;
+  color: #d8d8d8;
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.geTreeRootName {
+  font-weight: 600;
+}
+
+.geTreeRootCount {
+  color: #666;
+  font-size: 10.5px;
+  margin-left: auto;
+}
+
+.geAxisRow {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: #c8c8c8;
+  display: flex;
+  gap: 8px;
+  padding: 5px 8px 5px 26px;
+  text-align: left;
+  width: 100%;
+}
+
+.geAxisRow:hover {
+  background: #3d3d3d;
+}
+
+.geAxisEye {
+  align-items: center;
+  color: #9a9a9a;
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+}
+
+.geAxisEye:hover {
+  color: #e0e0e0;
+}
+
+.geAxisEye.off {
+  color: #4a4a4a;
+}
+
+.geAxisRow.active {
+  background: #39566b;
+  border-left-color: #4ca6d6;
+  color: #eaf4fa;
+}
+
+.geSwatch {
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px #00000040;
+  flex: none;
+  height: 13px;
+  width: 13px;
+}
+
+.geAxisName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geAxisTag {
+  color: #7a7a7a;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  margin-left: auto;
+}
+
+.geChannel {
+  background: #333;
+  border-top: 1px solid #1e1e1e;
+  flex: none;
+}
+
+.geChannelHdr {
+  align-items: center;
+  background: #3b3b3b;
+  color: #9a9a9a;
+  display: flex;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 6px;
+  height: 24px;
+  letter-spacing: 0.3px;
+  padding: 0 10px;
+}
+
+.geChannelHdr .geSwatch {
+  box-shadow: none;
+  height: 8px;
+  width: 8px;
+}
+
+.geChannelName {
+  color: #d8d8d8;
+}
+
+.geChannelGrid {
+  display: grid;
+  font-size: 11px;
+  gap: 5px 10px;
+  grid-template-columns: auto 1fr;
+  padding: 8px 10px;
+}
+
+.geChKey {
+  color: #8a8a8a;
+}
+
+.geChVal {
+  color: #d0d0d0;
+  font-family: ui-monospace, monospace;
+  text-align: right;
+}
+
+/* ---- graph ---- */
+.geGraph {
+  background: #262626;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.geRuler {
+  background: #2f2f2f;
+  border-bottom: 1px solid #1c1c1c;
+  color: #8a8a8a;
+  flex: none;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  height: 22px;
+  position: relative;
+}
+
+.geRulerLbl {
+  color: #8a8a8a;
+  position: absolute;
+  top: 5px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.playbackRangeBar {
+  background: rgba(120, 170, 90, 0.28);
+  bottom: 0;
+  position: absolute;
+  top: 0;
+  z-index: 1;
+}
+
+.playbackRangeHandle {
+  appearance: none;
+  background: #7ec24f;
+  border: 0;
+  bottom: 0;
+  cursor: ew-resize;
+  padding: 0;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 4px;
+  z-index: 5;
+}
+
+.playbackRangeHandle:hover,
+.playbackRangeHandle:active {
+  background: #9be073;
+  width: 5px;
+}
+
+.playbackRangeHandle.start {
+  border-radius: 2px 0 0 2px;
+}
+
+.playbackRangeHandle.end {
+  border-radius: 0 2px 2px 0;
+}
+
+.gefill {
+  background: #262626;
+  flex: 1;
+  min-height: 0;
+}
+
+.geValLbl {
+  color: #787878;
+  font-family: ui-monospace, monospace;
+  font-size: 10.5px;
+  left: 6px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateY(-50%);
+  z-index: 4;
+}
+
+.geValUnit {
+  bottom: 4px;
+  color: #5c5c5c;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  left: 6px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 4;
+}
+
+/* ---- right panel ---- */
+.geRight {
+  background: #333;
+  border-left: 1px solid #1e1e1e;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: 230px;
+}
+
+.geFields {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+}
+
+.geField {
+  align-items: center;
+  color: #9a9a9a;
+  display: grid;
+  font-size: 11px;
+  gap: 6px;
+  grid-template-columns: 64px 1fr auto;
+}
+
+.geField input {
+  background: #242424;
+  border: 1px solid #151515;
+  border-radius: 3px;
+  color: #d0d0d0;
+  font-size: 11px;
+  height: 22px;
+  min-width: 0;
+  outline: none;
+  padding: 0 6px;
+  text-align: right;
+  width: 100%;
+}
+
+.geField input:focus:not(:disabled) {
+  border-color: #4ca6d6;
+}
+
+.geField input:disabled {
+  color: #5a5a5a;
+  cursor: not-allowed;
+}
+
+.geField select {
+  background: #242424;
+  border: 1px solid #151515;
+  border-radius: 3px;
+  color: #d0d0d0;
+  font-size: 11px;
+  height: 22px;
+  min-width: 0;
+  outline: none;
+  padding: 0 4px;
+  width: 100%;
+}
+
+.geField select:focus:not(:disabled) {
+  border-color: #4ca6d6;
+}
+
+.geField select:disabled {
+  color: #5a5a5a;
+  cursor: not-allowed;
+}
+
+.geKeyBtns {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.geKeyBtns button {
+  background: #404040;
+  border: 1px solid #4d4d4d;
+  border-radius: 3px;
+  color: #d0d0d0;
+  flex: 1;
+  font-size: 11px;
+  padding: 5px 0;
+  text-align: center;
+}
+
+.geKeyBtns button:hover:not(:disabled) {
+  background: #4a4a4a;
+}
+
+.geKeyBtns button:disabled {
+  color: #666;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.geSpacerV {
+  flex: 1;
+}
+
+/* ---- segments footer ---- */
+.geFooter {
+  background: #333;
+  border-top: 1px solid #1e1e1e;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  height: 158px;
+}
+
+.geSegScroll {
+  align-items: stretch;
+  display: flex;
+  flex: 1;
+  gap: 12px;
+  min-height: 0;
+  overflow-x: auto;
+  padding: 12px 14px;
+}
+
+.geSegEmpty {
+  align-items: center;
+  color: #7a7a7a;
+  display: flex;
+  font-size: 12px;
+  justify-content: center;
+  width: 100%;
+}
+
+.geSegCard {
+  background: #2b2b2b;
+  border: 1px solid #3d3d3d;
+  border-radius: 4px;
+  color: #d8d8d8;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  padding: 9px 11px;
+  text-align: left;
+  width: 200px;
+}
+
+.geSegCard:hover {
+  border-color: #527ca8;
+}
+
+.geSegCard.active {
+  background: #243642;
+  border-color: #4ca6d6;
+  box-shadow: 0 0 0 1px #4ca6d640;
+  color: #eaf4fa;
+}
+
+.geSegHdr {
+  align-items: center;
+  display: flex;
+  font-size: 11.5px;
+  font-weight: 600;
+  gap: 7px;
+}
+
+.geSegHdr .geSwatch {
+  box-shadow: none;
+  height: 8px;
+  width: 8px;
+}
+
+.geSegMode {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.geSegAxis {
+  color: #7a7a7a;
+  font-size: 10.5px;
+  font-weight: 400;
+  margin-left: auto;
+}
+
+.geSegCard.active .geSegAxis {
+  color: #8fc4de;
+}
+
+.geSegPreview {
+  display: block;
+  height: 46px;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.geSegMeta {
+  color: #7a7a7a;
+  display: flex;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  justify-content: space-between;
+}
+
+.geSegCard.active .geSegMeta {
+  color: #8fc4de;
+}
+
+/* ===== Server file browser ===== */
+.serverBrowserDialog {
+  min-width: 420px;
+  max-width: 560px;
+  width: 90vw;
+}
+
+.serverBrowserBody {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.serverBrowserStatus {
+  color: #9eaab4;
+  font-size: 12px;
+  padding: 16px 14px;
+}
+
+.serverBrowserStatus.error {
+  color: var(--error);
+}
+
+.serverFileList {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.serverFileList li {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.serverFileList li:last-child {
+  border-bottom: none;
+}
+
+.serverFileItem {
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 8px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.serverFileItem:hover {
+  background: #2a3540;
+  color: #ffffff;
+}
+
+.serverFileName {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.serverFileMeta {
+  color: #6a7a86;
+  flex-shrink: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
 }

@@ -1,5 +1,5 @@
-import { MotionEditor } from "@/components/MotionEditor";
+import { GraphEditor } from "@/components/GraphEditor";
 
 export default function Home() {
-  return <MotionEditor />;
+  return <GraphEditor />;
 }

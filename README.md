@@ -1,19 +1,19 @@
 # Motion Editor
 
-Next.js only motion CSV editor. There is no FastAPI or Python backend.
+Next.js 전용 모션 CSV 편집기입니다. FastAPI나 Python 백엔드는 없습니다.
 
-## Requirements
+## 요구사항
 
-- Node.js 20.9.0 or newer
+- Node.js 20.9.0 이상
 - npm
 
-Python, FastAPI, and any backend server are not required.
+Python, FastAPI 등 별도 백엔드 서버는 필요하지 않습니다.
 
-## Install
+## 설치
 
 ### Ubuntu
 
-Install Node.js and npm:
+Node.js와 npm 설치:
 
 ```bash
 sudo apt update
@@ -22,14 +22,14 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-Check the installed versions:
+버전 확인:
 
 ```bash
 node -v
 npm -v
 ```
 
-Install project packages:
+프로젝트 패키지 설치:
 
 ```bash
 cd /path/to/motion_editor
@@ -38,50 +38,117 @@ npm install
 
 ### Windows
 
-Install Node.js LTS with one of these methods.
+아래 방법 중 하나로 Node.js LTS를 설치합니다.
 
-Using winget in PowerShell:
+PowerShell에서 winget 사용:
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
 ```
 
-Or install the Node.js LTS installer from `https://nodejs.org`.
+또는 `https://nodejs.org`에서 LTS 설치 파일을 내려받아 설치합니다.
 
-After installation, open a new PowerShell window and check:
+설치 후 새 PowerShell 창을 열고 확인:
 
 ```powershell
 node -v
 npm -v
 ```
 
-Install project packages:
+프로젝트 패키지 설치:
 
 ```powershell
 cd C:\motion_editor
 npm install
 ```
 
-## Features
+## 기능
 
-- Load motion CSV files where each row is one motor axis.
-- Edit axes and nodes on an interactive graph.
-- Add, delete, cut, rename, copy, and paste axes.
-- Add, remove, shift, drag, copy, and paste nodes.
-- Generate partial motion segments with interpolation modes.
-- Select partial segments and edit their handles.
-- Pan, zoom, fit, focus, undo, and redo graph edits.
-- Save edited motion data back to CSV from the browser.
+- 각 행이 모터 축인 모션 CSV 파일 로드
+- 인터랙티브 그래프에서 축·노드 편집
+- 축 추가, 삭제, 자르기, 이름 변경, 복사·붙여넣기
+- 노드 추가, 삭제, 이동, 드래그, 복사·붙여넣기
+- 보간 모드로 부분 모션 세그먼트 생성
+- 부분 세그먼트 선택 및 핸들 편집
+- 팬, 줌, 맞춤, 포커스, 실행 취소·다시 실행
+- 룰러 클릭/드래그로 플레이헤드 스크럽, 별도의 Playback Range 핸들·Frame Playback Range
+- Shift 홀드로 시간축·값축 잠금 팬/줌, 데이터 범위 밖으로 시간 축 팬
+- Frame Selection이 선택 키/세그먼트의 실제 프레임·값 범위에 맞춰 뷰를 조정
+- K 홀드 + 드래그로 키 이동 없이 플레이헤드만 스크럽
+- 툴바/KEY 패널 Frame·Value 직접 입력 (절대값, `+=N`/`-=N` 상대 오프셋, 다중 선택 일괄 적용)
+- Flat/Stepped 탄젠트 프리셋 (기존 Linear/Bezier 등과 동일한 방식으로 적용)
+- 생성 세그먼트 핸들 Break/Unify(In·Out 각도 독립/동기화), Lock/Free Weight(길이 동기화)
+- 키 2D 자유 드래그(시간+값 동시 이동, Shift=지배축 잠금, 다중 선택은 상대 간격 유지), 방향키 Nudge(Shift=10프레임)
+- S키/플롯 더블클릭으로 커브 값 유지 키 삽입(Maya Insert Key), Delete로 선택 키 삭제
+- Region Scale 박스: 2개 이상 키 선택 시 에지 드래그로 시간/값 스케일 (반대쪽 에지 피벗)
+- Pre/Post Infinity(Cycle/Oscillate/Linear) 점선 프리뷰 + Bake ∞로 Playback Range에 굽기
+- Buffer Curve: 현재 커브 스냅샷을 회색 고스트로 저장/표시/스왑
+- 축 리스트 eye 토글로 커브 표시/숨김, Isolate로 선택 축만 표시
+- 값 스냅 토글: 드래그 값 편집을 정수로 스냅
+- 노드 범위 붙여넣기 Merge/Insert/Replace 모드, 우클릭 메뉴에 Cut 추가
+- 편집한 모션 데이터를 CSV로 저장
 
-## Run
+### 단축키
+
+| 동작 | 단축키 |
+|------|--------|
+| 팬 | MMB 드래그 |
+| 줌 | Wheel (플롯 위 Shift+Wheel = 시간 전용 줌) |
+| 시간/값 축 잠금 팬 | Shift + MMB 드래그 |
+| 그래프 스크럽(플레이헤드만 이동) | K + 드래그 |
+| 키 이동 (시간+값) | 키 드래그 (Shift = 지배축 잠금) |
+| 키 값만 조절 | 선택 키에서 우클릭 상하 드래그 |
+| 키 삽입 (커브 값 유지) | S 또는 플롯 더블클릭 |
+| 선택 키 삭제 | Delete / Backspace |
+| 키 프레임 Nudge | ←/→ (Shift = 10프레임) |
+| Frame Selection | F |
+| Frame All | A |
+| Undo / Redo | Ctrl+Z / Ctrl+Shift+Z |
+| 선택 해제 / 메뉴 닫기 | Escape |
+
+텍스트 입력 필드에 포커스가 있을 때는 위 단축키가 동작하지 않고 브라우저 기본 동작을 따른다.
+
+### 파일 입출력 조합
+
+| | 클라이언트에 저장 | 서버에 저장 |
+|---|---|---|
+| **클라이언트에서 열기** | Open Client → Save Bundle / Export CSV | Open Client → Save Server |
+| **서버에서 열기** | Open Server → Save Bundle / Export CSV | Open Server → Save Server |
+
+- **Open Client** — 브라우저가 실행 중인 PC의 로컬 파일을 엽니다 (파일 선택창). `.zip` 번들 하나, 또는 `.csv`(+선택적으로 `.csv.meta.json`)를 함께 다중 선택할 수 있습니다.
+- **Open Server** — 서버 PC의 `MOTION_DIR` 폴더에 있는 CSV 목록을 보여 주고, 선택한 파일을 불러옵니다. 짝이 되는 meta가 있으면 핸들 편집 상태도 함께 복원됩니다.
+- **Save Bundle** — CSV+편집 상태(meta)를 zip 하나로 브라우저 PC에 다운로드합니다. **다른 PC로 모션을 옮길 때 권장** — 파일 하나만 옮기면 베지어 핸들 편집을 이어갈 수 있습니다.
+- **Export CSV** — 순수 CSV만 다운로드합니다. 로봇 등 외부 소비자에게 전달할 때 사용하며, 편집 상태(핸들)는 포함되지 않습니다.
+- **Save Server** — 편집한 CSV와 편집 상태(`<파일명>.csv.meta.json`)를 서버의 `MOTION_DIR` 폴더에 씁니다. 서버에서 연 파일이면 같은 이름으로 덮어쓰고, 아니면 파일명 입력 창이 뜹니다.
+- **Export / Import Library** — Open Server 다이얼로그 하단 버튼. 서버 라이브러리 전체(csv+meta 쌍 전부)를 zip 하나로 내려받거나, 그 zip을 다른 PC의 서버에 업로드해 통째로 복원합니다. 로컬 설치를 다른 PC로 옮길 때 사용합니다.
+
+### 편집 상태(meta) 영속화
+
+CSV에는 프레임별 숫자 값만 저장됩니다(외부 소비자 호환). 생성 세그먼트·베지어 핸들(각도/길이)·Pre/Post Infinity·축 이름은
+`<파일명>.csv.meta.json` 사이드카에 저장되며, Save Server/Save Bundle이 자동으로 함께 기록합니다.
+meta가 없는 CSV도 종전과 동일하게 열리고, meta가 손상된 경우 해당 항목만 조용히 무시됩니다.
+
+### 서버 폴더 (MOTION_DIR)
+
+`.env.example`을 `.env.local`로 복사한 뒤, 서버 PC에서 모션 CSV가 있는 폴더의 절대 경로를 `MOTION_DIR`에 설정합니다.
+
+```bash
+cp .env.example .env.local
+# .env.local 편집
+MOTION_DIR=/home/hexapod/motions
+```
+
+`MOTION_DIR`을 설정하지 않으면 프로젝트 루트의 `data/motions/`를 사용하며, 처음 접근 시 자동으로 만들어집니다. 해당 폴더의 `.csv`만 노출되며, 하위 폴더와 경로 탈출(`..`)은 차단됩니다.
+
+## 실행
 
 ```bash
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000`.
+브라우저에서 `http://127.0.0.1:3000` 을 엽니다.
 
-## Build
+## 빌드
 
 ```bash
 npm run build
