@@ -305,8 +305,8 @@ const DEFAULT_CURRENT_FRAME = 10;
 const DEFAULT_TIMELINE_MAX_FRAME = 119;
 const DEFAULT_SPLINE_MIN_GAP = 2;
 const DEFAULT_SPLINE_TENSION = 0;
-const MAX_TIMELINE_FRAME = 100000;
-const MOTION_FRAME_INTERVAL_SECONDS = 0.01;
+// CSV row 0 is the time axis. Every motion sample advances by exactly 1 ms.
+const MOTION_FRAME_INTERVAL_SECONDS = 0.001;
 const DEGREE_MATCH_TOLERANCE = 0.1;
 
 const isMotionNumber = (value: MotionValue | undefined): value is number =>
@@ -367,7 +367,10 @@ const parseCsvRecords = (text: string) => {
 };
 
 const parseMotionCsv = (text: string): MotionAxis[] =>
+  // The first CSV row contains timestamps, not motor values. The editor uses
+  // frame indices internally and regenerates a clean 1 ms time axis on save.
   parseCsvRecords(text)
+    .slice(1)
     .map((record, index) => ({
       index,
       values: record.map((value) => Number(value.trim())).filter(Number.isFinite),
@@ -461,14 +464,17 @@ const buildSaveAxisValues = (
 
 const serializeMotionCsv = (axes: MotionAxis[], missingValueStrategy: MissingValueSaveStrategy = "linear") => {
   const frameCount = getMotionSaveFrameCount(axes);
+  const timeAxis = Array.from(
+    { length: frameCount },
+    (_, frame) => formatCsvNumber(frame * MOTION_FRAME_INTERVAL_SECONDS),
+  ).join(",");
+  const motionRows = axes.map((axis) =>
+    buildSaveAxisValues(axis.values, frameCount, missingValueStrategy)
+      .map((value) => (isMotionNumber(value) ? formatCsvNumber(value) : ""))
+      .join(","),
+  );
 
-  return axes
-    .map((axis) =>
-      buildSaveAxisValues(axis.values, frameCount, missingValueStrategy)
-        .map((value) => (isMotionNumber(value) ? formatCsvNumber(value) : ""))
-        .join(","),
-    )
-    .join("\n");
+  return [timeAxis, ...motionRows].join("\n");
 };
 
 const ensureCsvFileName = (name: string) => {
@@ -544,8 +550,11 @@ const buildDataYRange = (axes: MotionAxis[]): DegreeRange => {
     return { min: -90, max: 90 };
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  // Avoid spreading long (1 ms) recordings into function arguments.
+  const { min, max } = values.reduce(
+    (range, value) => ({ min: Math.min(range.min, value), max: Math.max(range.max, value) }),
+    { min: Infinity, max: -Infinity },
+  );
   const padding = Math.max((max - min) * 0.08, 1);
 
   return {
@@ -570,7 +579,7 @@ const clampRange = (start: number, span: number, maxIndex: number): VisibleRange
 };
 
 const clampFreeRange = (start: number, span: number): VisibleRange => {
-  const nextSpan = clamp(span, 1, 100000);
+  const nextSpan = Math.max(span, 1);
   const nextStart = Math.max(0, start);
 
   return {
@@ -645,7 +654,7 @@ const formatStatNumber = (value: number | null) => {
 
 const formatStatDegree = (value: number | null) => (value === null ? "-" : `${formatStatNumber(value)} deg`);
 
-const formatFrameTime = (frame: number) => `${(frame * MOTION_FRAME_INTERVAL_SECONDS).toFixed(2)}s`;
+const formatFrameTime = (frame: number) => `${(frame * MOTION_FRAME_INTERVAL_SECONDS).toFixed(3)}s`;
 
 const formatAxisDisplayName = (axis: MotionAxis | null | undefined) =>
   axis?.name ? axis.name : axis ? formatStatNumber(axis.index) : "-";
@@ -1495,7 +1504,7 @@ const buildGeneratedSegmentFrameBounds = (segment: GeneratedSegment) => {
 };
 
 const buildFreeVisibleRange = (start: number, span: number): VisibleRange => {
-  const nextSpan = clamp(span, 1, 100000);
+  const nextSpan = Math.max(span, 1);
 
   return {
     start,
@@ -2342,7 +2351,7 @@ export function MotionEditor() {
 
   const getAxisContextMenuPosition = (clientX: number, clientY: number) => ({
     x: Math.max(6, Math.min(clientX, window.innerWidth - 128)),
-    y: Math.max(6, Math.min(clientY, window.innerHeight - 88)),
+    y: Math.max(6, Math.min(clientY, window.innerHeight - 120)),
   });
 
   const handleAxisRowContextMenu = (event: MouseEvent<HTMLButtonElement>, axisIndex: number) => {
@@ -2497,25 +2506,42 @@ export function MotionEditor() {
     }
   };
 
-  const deleteSelectedAxis = () => {
-    if (selectedAxis === null) return;
+  const deleteAxis = (axisIndex: number) => {
+    if (!axes.some((axis) => axis.index === axisIndex)) return;
 
     pushUndoSnapshot();
 
     setAxes((current) => {
-      const selectedPosition = current.findIndex((axis) => axis.index === selectedAxis);
-      const nextAxes = current.filter((axis) => axis.index !== selectedAxis);
-      const nextSelected = nextAxes[selectedPosition]?.index ?? nextAxes[selectedPosition - 1]?.index ?? null;
+      const deletedPosition = current.findIndex((axis) => axis.index === axisIndex);
+      const nextAxes = current.filter((axis) => axis.index !== axisIndex);
 
-      setSelectedAxis(nextSelected);
+      if (selectedAxis === axisIndex) {
+        const nextSelected = nextAxes[deletedPosition]?.index ?? nextAxes[deletedPosition - 1]?.index ?? null;
+        setSelectedAxis(nextSelected);
+      }
       return nextAxes;
     });
-    setGeneratedSegments((current) => current.filter((segment) => segment.axisIndex !== selectedAxis));
+    setGeneratedSegments((current) => current.filter((segment) => segment.axisIndex !== axisIndex));
     setSelectedGeneratedSegmentKey(null);
     setSelectedGeneratedHandle(null);
-    setSelectedNode(null);
-    setSelectedNodes([]);
-    setNodeSelectionKind(null);
+    if (selectedAxis === axisIndex) {
+      setSelectedNode(null);
+      setSelectedNodes([]);
+      setNodeSelectionKind(null);
+    }
+    setAxisContextMenu(null);
+  };
+
+  const deleteSelectedAxis = () => {
+    if (selectedAxis === null) return;
+
+    deleteAxis(selectedAxis);
+  };
+
+  const deleteAxisFromContextMenu = () => {
+    if (axisContextMenu?.kind !== "axis") return;
+
+    deleteAxis(axisContextMenu.axisIndex);
   };
 
   const cutSelectedAxisAtPlayhead = () => {
@@ -2850,7 +2876,7 @@ export function MotionEditor() {
     const rect = container.getBoundingClientRect();
     const ratio = (clientX - rect.left) / rect.width;
     const span = visibleRange.end - visibleRange.start;
-    const nextFrame = clamp(Math.round(visibleRange.start + span * ratio), 0, MAX_TIMELINE_FRAME);
+    const nextFrame = Math.max(0, Math.round(visibleRange.start + span * ratio));
     let nextRange = visibleRange;
 
     if (nextFrame < visibleRange.start) {
@@ -4418,6 +4444,9 @@ export function MotionEditor() {
               </button>
               <button className="axisContextMenuItem" type="button" onClick={copyAxisFromContextMenu}>
                 Copy
+              </button>
+              <button className="axisContextMenuItem" type="button" onClick={deleteAxisFromContextMenu}>
+                Delete
               </button>
             </>
           ) : (

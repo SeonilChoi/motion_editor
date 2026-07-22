@@ -359,8 +359,8 @@ const DEFAULT_CURRENT_FRAME = 10;
 const DEFAULT_TIMELINE_MAX_FRAME = 119;
 const DEFAULT_SPLINE_MIN_GAP = 2;
 const DEFAULT_SPLINE_TENSION = 0;
-const MAX_TIMELINE_FRAME = 100000;
-const MOTION_FRAME_INTERVAL_SECONDS = 0.01;
+// CSV row 0 is the time axis. Every motion sample advances by exactly 1 ms.
+const MOTION_FRAME_INTERVAL_SECONDS = 0.001;
 const DEGREE_MATCH_TOLERANCE = 0.1;
 // 플롯 SVG 세로 매핑: 값 범위가 y% 92(하단)~8(상단), 총 84%를 차지한다 (기존 92/84 수식과 동일한 기하).
 const PLOT_VALUE_SPAN_PERCENT = 84;
@@ -458,7 +458,10 @@ const parseCsvRecords = (text: string) => {
 };
 
 const parseMotionCsv = (text: string): MotionAxis[] =>
+  // The first CSV row contains timestamps, not motor values. The editor uses
+  // frame indices internally and regenerates a clean 1 ms time axis on save.
   parseCsvRecords(text)
+    .slice(1)
     .map((record, index) => ({
       index,
       values: record.map((value) => Number(value.trim())).filter(Number.isFinite),
@@ -617,14 +620,17 @@ const buildSaveAxisValues = (
 
 const serializeMotionCsv = (axes: MotionAxis[], missingValueStrategy: MissingValueSaveStrategy = "linear") => {
   const frameCount = getMotionSaveFrameCount(axes);
+  const timeAxis = Array.from(
+    { length: frameCount },
+    (_, frame) => formatCsvNumber(frame * MOTION_FRAME_INTERVAL_SECONDS),
+  ).join(",");
+  const motionRows = axes.map((axis) =>
+    buildSaveAxisValues(axis.values, frameCount, missingValueStrategy)
+      .map((value) => (isMotionNumber(value) ? formatCsvNumber(value) : ""))
+      .join(","),
+  );
 
-  return axes
-    .map((axis) =>
-      buildSaveAxisValues(axis.values, frameCount, missingValueStrategy)
-        .map((value) => (isMotionNumber(value) ? formatCsvNumber(value) : ""))
-        .join(","),
-    )
-    .join("\n");
+  return [timeAxis, ...motionRows].join("\n");
 };
 
 const ensureCsvFileName = (name: string) => {
@@ -876,8 +882,11 @@ const buildDataYRange = (axes: MotionAxis[]): DegreeRange => {
     return { min: -90, max: 90 };
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  // Avoid spreading long (1 ms) recordings into function arguments.
+  const { min, max } = values.reduce(
+    (range, value) => ({ min: Math.min(range.min, value), max: Math.max(range.max, value) }),
+    { min: Infinity, max: -Infinity },
+  );
   const padding = Math.max((max - min) * 0.08, 1);
 
   return {
@@ -892,7 +901,7 @@ const clampRange = (start: number, span: number, maxIndex: number): VisibleRange
   }
 
   const minSpan = Math.min(8, maxIndex);
-  const nextSpan = clamp(span, minSpan, 100000);
+  const nextSpan = Math.max(span, minSpan);
   const nextStart = Math.max(0, start);
 
   return {
@@ -902,7 +911,7 @@ const clampRange = (start: number, span: number, maxIndex: number): VisibleRange
 };
 
 const clampFreeRange = (start: number, span: number): VisibleRange => {
-  const nextSpan = clamp(span, 1, 100000);
+  const nextSpan = Math.max(span, 1);
   const nextStart = Math.max(0, start);
 
   return {
@@ -965,7 +974,7 @@ const formatStatNumber = (value: number | null) => {
 };
 
 
-const formatFrameTime = (frame: number) => `${(frame * MOTION_FRAME_INTERVAL_SECONDS).toFixed(2)}s`;
+const formatFrameTime = (frame: number) => `${(frame * MOTION_FRAME_INTERVAL_SECONDS).toFixed(3)}s`;
 
 const formatAxisDisplayName = (axis: MotionAxis | null | undefined) =>
   axis?.name ? axis.name : axis ? formatStatNumber(axis.index) : "-";
@@ -1816,7 +1825,7 @@ const buildGeneratedSegmentFrameBounds = (segment: GeneratedSegment) => {
 };
 
 const buildFreeVisibleRange = (start: number, span: number): VisibleRange => {
-  const nextSpan = clamp(span, 1, 100000);
+  const nextSpan = Math.max(span, 1);
 
   return {
     start,
@@ -3029,7 +3038,7 @@ export function GraphEditor() {
 
   const getAxisContextMenuPosition = (clientX: number, clientY: number) => ({
     x: Math.max(6, Math.min(clientX, window.innerWidth - 128)),
-    y: Math.max(6, Math.min(clientY, window.innerHeight - 88)),
+    y: Math.max(6, Math.min(clientY, window.innerHeight - 120)),
   });
 
   const handleAxisRowContextMenu = (event: MouseEvent<HTMLButtonElement>, axisIndex: number) => {
@@ -3184,25 +3193,42 @@ export function GraphEditor() {
     }
   };
 
-  const deleteSelectedAxis = () => {
-    if (selectedAxis === null) return;
+  const deleteAxis = (axisIndex: number) => {
+    if (!axes.some((axis) => axis.index === axisIndex)) return;
 
     pushUndoSnapshot();
 
     setAxes((current) => {
-      const selectedPosition = current.findIndex((axis) => axis.index === selectedAxis);
-      const nextAxes = current.filter((axis) => axis.index !== selectedAxis);
-      const nextSelected = nextAxes[selectedPosition]?.index ?? nextAxes[selectedPosition - 1]?.index ?? null;
+      const deletedPosition = current.findIndex((axis) => axis.index === axisIndex);
+      const nextAxes = current.filter((axis) => axis.index !== axisIndex);
 
-      setSelectedAxis(nextSelected);
+      if (selectedAxis === axisIndex) {
+        const nextSelected = nextAxes[deletedPosition]?.index ?? nextAxes[deletedPosition - 1]?.index ?? null;
+        setSelectedAxis(nextSelected);
+      }
       return nextAxes;
     });
-    setGeneratedSegments((current) => current.filter((segment) => segment.axisIndex !== selectedAxis));
+    setGeneratedSegments((current) => current.filter((segment) => segment.axisIndex !== axisIndex));
     setSelectedGeneratedSegmentKey(null);
     setSelectedGeneratedHandle(null);
-    setSelectedNode(null);
-    setSelectedNodes([]);
-    setNodeSelectionKind(null);
+    if (selectedAxis === axisIndex) {
+      setSelectedNode(null);
+      setSelectedNodes([]);
+      setNodeSelectionKind(null);
+    }
+    setAxisContextMenu(null);
+  };
+
+  const deleteSelectedAxis = () => {
+    if (selectedAxis === null) return;
+
+    deleteAxis(selectedAxis);
+  };
+
+  const deleteAxisFromContextMenu = () => {
+    if (axisContextMenu?.kind !== "axis") return;
+
+    deleteAxis(axisContextMenu.axisIndex);
   };
 
   const cutSelectedAxisAtPlayhead = () => {
@@ -3292,7 +3318,7 @@ export function GraphEditor() {
   const insertKeyAtFrame = (frame: number) => {
     if (!selectedAxisRecord) return;
 
-    const targetFrame = clamp(Math.round(frame), 0, MAX_TIMELINE_FRAME);
+    const targetFrame = Math.max(0, Math.round(frame));
     const isInsideGeneratedSegment = generatedSegments.some(
       (segment) =>
         segment.axisIndex === selectedAxisRecord.index &&
@@ -3380,7 +3406,7 @@ export function GraphEditor() {
 
     if (!Number.isFinite(parsed) || !isMotionNumber(value)) return;
 
-    const toFrame = clamp(Math.round(parsed), 0, MAX_TIMELINE_FRAME);
+    const toFrame = Math.max(0, Math.round(parsed));
     if (toFrame === fromFrame) return;
 
     pushUndoSnapshot();
@@ -3443,7 +3469,7 @@ export function GraphEditor() {
     });
 
     const moves = origins.map(({ frame, value }) => ({
-      toFrame: clamp(frame + deltaFrames, 0, MAX_TIMELINE_FRAME),
+      toFrame: Math.max(0, frame + deltaFrames),
       value,
     }));
 
@@ -3538,7 +3564,7 @@ export function GraphEditor() {
       }
 
       const moves = drag.origins.map(({ frame, value }) => ({
-        toFrame: clamp(frame + deltaFrames, 0, MAX_TIMELINE_FRAME),
+        toFrame: Math.max(0, frame + deltaFrames),
         value: applyValueSnap(value + deltaValue),
       }));
 
@@ -3646,7 +3672,7 @@ export function GraphEditor() {
       const moves = drag.origins.map(({ frame, value }) =>
         isTimeScale
           ? {
-              toFrame: clamp(Math.round(pivotFrame + (frame - pivotFrame) * scale), 0, MAX_TIMELINE_FRAME),
+              toFrame: Math.max(0, Math.round(pivotFrame + (frame - pivotFrame) * scale)),
               value,
             }
           : { toFrame: frame, value: applyValueSnap(pivotValue + (value - pivotValue) * scale) },
@@ -4004,7 +4030,7 @@ export function GraphEditor() {
     const rect = container.getBoundingClientRect();
     const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
     const span = visibleRange.end - visibleRange.start;
-    const nextFrame = clamp(Math.round(visibleRange.start + span * ratio), 0, MAX_TIMELINE_FRAME);
+    const nextFrame = Math.max(0, Math.round(visibleRange.start + span * ratio));
     const nextSelectedNode =
       selectedAxisRecord && isMotionNumber(selectedAxisRecord.values[nextFrame])
         ? {
@@ -4084,7 +4110,7 @@ export function GraphEditor() {
     const rect = container.getBoundingClientRect();
     const ratio = (clientX - rect.left) / rect.width;
     const span = visibleRange.end - visibleRange.start;
-    const nextFrame = clamp(Math.round(visibleRange.start + span * ratio), 0, MAX_TIMELINE_FRAME);
+    const nextFrame = Math.max(0, Math.round(visibleRange.start + span * ratio));
 
     setPlaybackRange((current) =>
       edge === "start"
@@ -4154,8 +4180,8 @@ export function GraphEditor() {
     const lastFrame = getLastMotionValueFrame(values);
     if (firstFrame === null || lastFrame === null) return;
 
-    const fromFrame = clamp(Math.round(playbackRange.start), 0, MAX_TIMELINE_FRAME);
-    const toFrame = clamp(Math.round(playbackRange.end), 0, MAX_TIMELINE_FRAME);
+    const fromFrame = Math.max(0, Math.round(playbackRange.start));
+    const toFrame = Math.max(0, Math.round(playbackRange.end));
     const writes: Array<{ frame: number; value: MotionValue }> = [];
 
     for (let frame = fromFrame; frame <= toFrame; frame += 1) {
@@ -6243,6 +6269,9 @@ export function GraphEditor() {
               </button>
               <button className="axisContextMenuItem" type="button" onClick={copyAxisFromContextMenu}>
                 Copy
+              </button>
+              <button className="axisContextMenuItem" type="button" onClick={deleteAxisFromContextMenu}>
+                Delete
               </button>
             </>
           ) : (
