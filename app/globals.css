@@ -834,6 +834,10 @@ button {
   vector-effect: non-scaling-stroke;
 }
 
+.generatedKeyHandleLine.horizontal {
+  stroke: rgba(255, 190, 122, 0.96);
+}
+
 .regionScaleBox {
   background: rgba(98, 214, 255, 0.05);
   border: 1px dashed rgba(98, 214, 255, 0.65);
@@ -901,6 +905,11 @@ button {
   transform: translate(-50%, -50%);
   width: 9px;
   z-index: 3;
+}
+
+.generatedKeyHandleDot.horizontal {
+  background: #443a2c;
+  border-color: #ffb34d;
 }
 
 .generatedKeyHandleDot.selected,

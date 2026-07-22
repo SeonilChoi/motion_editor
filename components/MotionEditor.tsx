@@ -132,7 +132,9 @@ type GeneratedHandleSide = "left" | "right";
 type GeneratedHandleRenderData = {
   center: PlotPoint;
   left: PlotPoint;
+  leftHorizontal: boolean;
   right: PlotPoint;
+  rightHorizontal: boolean;
 };
 
 type SelectedGeneratedHandle = {
@@ -278,6 +280,7 @@ const SELECTED_GENERATED_SEGMENT_COLOR = "#62d6ff";
 const SHOW_ALL_NODE_MARKERS_VISIBLE_SPAN = 200;
 const NODE_MARKER_SIZE_SCALE = 0.85;
 const DISCONNECTED_NODE_MARKER_MULTIPLIER = 2.1 * (2 / NODE_MARKER_SIZE_SCALE);
+const SPECIAL_NODE_MARKER_MIN_SIZE = 22;
 const FOCUS_FRAME_RADIUS = 100;
 const FOCUS_DEGREE_RADIUS = 50;
 const MAX_UNDO_HISTORY = 80;
@@ -315,6 +318,8 @@ const isMotionNumber = (value: MotionValue | undefined): value is number =>
 const framesToSeconds = (frames: number) => frames * MOTION_FRAME_INTERVAL_SECONDS;
 
 const handleAngleToSlope = (angle: number) => Math.tan((angle * Math.PI) / 180);
+const isHorizontalHandleAngle = (angle: number) => Math.abs(Math.sin((angle * Math.PI) / 180)) < 0.0524;
+const snapHorizontalHandleAngle = (angle: number) => (isHorizontalHandleAngle(angle) ? 0 : angle);
 
 const parseCsvRecords = (text: string) => {
   const records: string[][] = [];
@@ -371,11 +376,23 @@ const parseMotionCsv = (text: string): MotionAxis[] =>
   // frame indices internally and regenerates a clean 1 ms time axis on save.
   parseCsvRecords(text)
     .slice(1)
-    .map((record, index) => ({
-      index,
-      values: record.map((value) => Number(value.trim())).filter(Number.isFinite),
-    }))
-    .filter((axis) => axis.values.length > 0);
+    .map((record, index) => {
+      const values: MotionValue[] = record.map((value) => {
+        const trimmedValue = value.trim();
+        if (trimmedValue.length === 0) return null;
+
+        const numericValue = Number(trimmedValue);
+        return Number.isFinite(numericValue) ? numericValue : null;
+      });
+
+      // A longer time row (or CSV padding) must not extend a motion axis.
+      while (values.length > 0 && !isMotionNumber(values.at(-1))) {
+        values.pop();
+      }
+
+      return { index, values };
+    })
+    .filter((axis) => axis.values.some(isMotionNumber));
 
 const formatCsvNumber = (value: number) =>
   Number.isInteger(value) ? value.toString() : value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
@@ -798,10 +815,15 @@ const toPlotPoints = (
 
 const buildDisconnectedFrameSet = (values: MotionValue[]) => {
   const frames = new Set<number>();
+  let firstFrame: number | null = null;
   let previousFrame: number | null = null;
 
   values.forEach((value, frame) => {
     if (!isMotionNumber(value)) return;
+
+    if (firstFrame === null) {
+      firstFrame = frame;
+    }
 
     if (previousFrame !== null && frame - previousFrame > 1) {
       frames.add(previousFrame);
@@ -810,6 +832,10 @@ const buildDisconnectedFrameSet = (values: MotionValue[]) => {
 
     previousFrame = frame;
   });
+
+  // Endpoints remain visible/selectable when regular markers are hidden.
+  if (firstFrame !== null) frames.add(firstFrame);
+  if (previousFrame !== null) frames.add(previousFrame);
 
   return frames;
 };
@@ -1271,6 +1297,30 @@ const solveBezierTimeForX = (x0: number, x1: number, x2: number, x3: number, tar
 
   return (low + high) / 2;
 };
+
+const getGeneratedHandleLengthLimit = (
+  keyFrames: number[],
+  frame: number,
+  side: GeneratedHandleSide,
+) => {
+  const sortedKeyFrames = [...keyFrames].sort((left, right) => left - right);
+  const keyIndex = sortedKeyFrames.indexOf(frame);
+  if (keyIndex < 0) return Infinity;
+
+  const previousGap = keyIndex > 0 ? frame - sortedKeyFrames[keyIndex - 1] : null;
+  const nextGap = keyIndex < sortedKeyFrames.length - 1 ? sortedKeyFrames[keyIndex + 1] - frame : null;
+  return Math.max(0.1, (side === "left" ? previousGap ?? nextGap : nextGap ?? previousGap) ?? 0.1);
+};
+
+const normalizeGeneratedHandleLengths = (
+  handle: GeneratedHandlePosition,
+  keyFrames: number[],
+  frame: number,
+): GeneratedHandlePosition => ({
+  ...handle,
+  leftLength: clamp(handle.leftLength, 0.1, getGeneratedHandleLengthLimit(keyFrames, frame, "left")),
+  rightLength: clamp(handle.rightLength, 0.1, getGeneratedHandleLengthLimit(keyFrames, frame, "right")),
+});
 
 const computeHandleCurveValue = (
   frame: number,
@@ -1901,11 +1951,13 @@ export function MotionEditor() {
 
     keyFrames.forEach((frame) => {
       const value = selectedAxisRecord.values[frame];
-      const handle =
+      const rawHandle =
         selectedGeneratedSegment.handles[frame.toString()] ??
         buildDefaultGeneratedHandlePosition(selectedAxisRecord.values, keyFrames, frame);
 
-      if (!isMotionNumber(value) || !handle) return;
+      if (!isMotionNumber(value) || !rawHandle) return;
+
+      const handle = normalizeGeneratedHandleLengths(rawHandle, keyFrames, frame);
 
       const slope = handleAngleToSlope(handle.angle);
       const leftFrame = frame - handle.leftLength;
@@ -1916,7 +1968,9 @@ export function MotionEditor() {
       nextHandles.set(frame, {
         center: toPlotPosition(frame, value, visibleRange, yRange.min, yRange.max),
         left: toPlotPosition(leftFrame, leftValue, visibleRange, yRange.min, yRange.max),
+        leftHorizontal: isHorizontalHandleAngle(handle.angle),
         right: toPlotPosition(rightFrame, rightValue, visibleRange, yRange.min, yRange.max),
+        rightHorizontal: isHorizontalHandleAngle(handle.angle),
       });
     });
 
@@ -3230,13 +3284,17 @@ export function MotionEditor() {
 
     if (!segment || !axis || !currentHandle) return;
 
-    const nextHandle = update(currentHandle);
+    const nextHandle = normalizeGeneratedHandleLengths(update(currentHandle), keyFrames, frame);
     const nextSegment = {
       ...segment,
+      // Once a handle is edited, the curve is the actual cubic Bezier defined
+      // by the visible bars rather than a baseline-plus-delta approximation.
+      baselineValues: undefined,
       handles: {
         ...segment.handles,
         [frame.toString()]: nextHandle,
       },
+      initialHandles: undefined,
     };
 
     setGeneratedSegments((current) =>
@@ -3255,7 +3313,7 @@ export function MotionEditor() {
 
     updateGeneratedHandle(selectedGeneratedHandle.segmentId, selectedGeneratedHandle.frame, (handle) => ({
       ...handle,
-      [field]: field === "angle" ? nextValue : Math.max(0.1, nextValue),
+      [field]: field === "angle" ? snapHorizontalHandleAngle(nextValue) : Math.max(0.1, nextValue),
     }));
   };
 
@@ -3312,7 +3370,9 @@ export function MotionEditor() {
         ? Math.max(0.1, pointer.frame - drag.centerFrame)
         : Math.max(0.1, drag.centerFrame - pointer.frame);
     const tangentRise = drag.side === "right" ? pointer.value - drag.centerValue : drag.centerValue - pointer.value;
-    const angle = Math.atan2(tangentRise, framesToSeconds(length)) * (180 / Math.PI);
+    const angle = snapHorizontalHandleAngle(
+      Math.atan2(tangentRise, framesToSeconds(length)) * (180 / Math.PI),
+    );
 
     updateGeneratedHandle(drag.segmentId, drag.frame, (handle) => ({
       ...handle,
@@ -3917,7 +3977,10 @@ export function MotionEditor() {
                         const isDisconnectedNode = disconnectedFrameSet.has(point.frame);
                         const markerSize =
                           !shouldShowAllNodeMarkers && isDisconnectedNode
-                            ? nodeMarkerSize * DISCONNECTED_NODE_MARKER_MULTIPLIER
+                            ? Math.max(
+                                nodeMarkerSize * DISCONNECTED_NODE_MARKER_MULTIPLIER,
+                                SPECIAL_NODE_MARKER_MIN_SIZE,
+                              )
                             : nodeMarkerSize;
                         const generatedHandle = generatedKeyHandles.get(point.frame);
                         const isGeneratedKeyPoint = generatedHandle !== undefined;
@@ -3952,25 +4015,31 @@ export function MotionEditor() {
                                   y1={generatedHandle.left.y}
                                   x2={generatedHandle.center.x}
                                   y2={generatedHandle.center.y}
-                                  className="generatedKeyHandleLine"
+                                  className={
+                                    generatedHandle.leftHorizontal
+                                      ? "generatedKeyHandleLine horizontal"
+                                      : "generatedKeyHandleLine"
+                                  }
                                 />
                                 <line
                                   x1={generatedHandle.center.x}
                                   y1={generatedHandle.center.y}
                                   x2={generatedHandle.right.x}
                                   y2={generatedHandle.right.y}
-                                  className="generatedKeyHandleLine"
+                                  className={
+                                    generatedHandle.rightHorizontal
+                                      ? "generatedKeyHandleLine horizontal"
+                                      : "generatedKeyHandleLine"
+                                  }
                                 />
                               </svg>
                             ) : null}
                             {generatedHandle ? (
                               <button
                                 aria-label={`Adjust left handle at frame ${point.frame}`}
-                                className={
-                                  isSelectedGeneratedHandle
-                                    ? "generatedKeyHandleDot selected"
-                                    : "generatedKeyHandleDot"
-                                }
+                                className={`generatedKeyHandleDot${isSelectedGeneratedHandle ? " selected" : ""}${
+                                  generatedHandle.leftHorizontal ? " horizontal" : ""
+                                }`}
                                 type="button"
                                 style={{ left: `${generatedHandle.left.x}%`, top: `${generatedHandle.left.y}%` }}
                                 onPointerDown={(event) => handleGeneratedHandlePointerDown(event, point.frame, "left")}
@@ -3982,11 +4051,9 @@ export function MotionEditor() {
                             {generatedHandle ? (
                               <button
                                 aria-label={`Adjust right handle at frame ${point.frame}`}
-                                className={
-                                  isSelectedGeneratedHandle
-                                    ? "generatedKeyHandleDot selected"
-                                    : "generatedKeyHandleDot"
-                                }
+                                className={`generatedKeyHandleDot${isSelectedGeneratedHandle ? " selected" : ""}${
+                                  generatedHandle.rightHorizontal ? " horizontal" : ""
+                                }`}
                                 type="button"
                                 style={{ left: `${generatedHandle.right.x}%`, top: `${generatedHandle.right.y}%` }}
                                 onPointerDown={(event) => handleGeneratedHandlePointerDown(event, point.frame, "right")}
